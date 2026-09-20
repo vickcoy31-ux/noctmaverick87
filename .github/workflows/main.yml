@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-LAST-STAND
+name: PROJECT-OPICK-X110-FINAL-STRIKE
 
 on:
   workflow_dispatch:
@@ -10,10 +10,9 @@ jobs:
       TZ: Asia/Jakarta
       CLANG_VERSION: "clang-r416183b"
       CLANG_URL: "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12L-gsi/clang-r416183b.tar.gz"
-      GCC_VERSION: "11"
 
     steps:
-      # 1. INSTALL ALL POSSIBLE DEPENDENCIES
+      # 1. INSTALL DEPENDENCIES (Paksa instal Clang & LLD Ubuntu)
       - name: Install Host Dependencies
         run: |
           sudo apt-get update
@@ -33,7 +32,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
-          key: clang-ultimate-${{ env.CLANG_VERSION }}
+          key: clang-final-${{ env.CLANG_VERSION }}
 
       - name: Download Android Clang
         if: steps.cache-clang.outputs.cache-hit != 'true'
@@ -43,8 +42,8 @@ jobs:
           mkdir -p gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
           tar -xzf gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}.tar.gz -C gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
 
-      # 4. THE ULTIMATE WRAPPER SYSTEM (Sapu Jagat)
-      - name: Configure Build Layout & Wrappers
+      # 4. SAMSUNG BUILD SYSTEM LAYOUT (The Native Approach)
+      - name: Configure Samsung Build Layout
         run: |
           cd gta9
           ln -sf . kernel-5.10
@@ -54,32 +53,13 @@ jobs:
           TOOL_DIR="$PWD/build/build-tools/path/linux-x86"
           mkdir -p "$TOOL_DIR"
 
-          # Wrapper Clang: Buang rtlib, buang nostdinc, paksa GCC Ubuntu
-          cat <<EOF > "$TOOL_DIR/clang"
-          #!/bin/bash
-          ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
-          exec /usr/bin/gcc -D__GCC_VERSION=110000 \$ARGS
-          EOF
-          chmod +x "$TOOL_DIR/clang"
-
-          cat <<EOF > "$TOOL_DIR/clang++"
-          #!/bin/bash
-          ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
-          exec /usr/bin/g++ -D__GCC_VERSION=110000 \$ARGS
-          EOF
-          chmod +x "$TOOL_DIR/clang++"
-
-          # Wrapper LLD: Paksa lihat folder library Ubuntu
-          cat <<EOF > "$TOOL_DIR/ld.lld"
-          #!/bin/bash
-          exec "$CLANG_ROOT/bin/ld.lld" -L/usr/lib/x86_64-linux-gnu -L/usr/lib "\$@"
-          EOF
-          chmod +x "$TOOL_DIR/ld.lld"
-
-          ln -sf "$TOOL_DIR/ld.lld" "$TOOL_DIR/lld"
+          # KUNCI: Gunakan CLANG UBUNTU (Native) untuk tools agar tidak error rtlib & sys/types.h
+          ln -sf /usr/bin/clang "$TOOL_DIR/clang"
+          ln -sf /usr/bin/clang++ "$TOOL_DIR/clang++"
+          ln -sf /usr/bin/ld.lld "$TOOL_DIR/ld.lld"
+          ln -sf /usr/bin/ld.lld "$TOOL_DIR/lld"
           ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
 
-          # KUNCI: Pindahkan semua alat bantu ke TOOL_DIR agar tidak hilang saat PATH di-overwrite
           COMMANDS="python3 env bash flex bison echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
           for cmd in $COMMANDS; do
             target="$(type -P "$cmd" || true)"
@@ -91,7 +71,7 @@ jobs:
           SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
           ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
 
-      # 5. CONFIGURATION (Anti-False Success)
+      # 5. GENERATE CONFIG
       - name: Generate Build Config
         run: |
           cd gta9
@@ -103,7 +83,7 @@ jobs:
             --kernel-defconfig-overlays "entry_level.config ot11.config ot11_data.config ot11_wifi.config" \
             -m user -o out/build.config
 
-      # 6. GLOBAL ENVIRONMENT
+      # 6. ENV INJECTION
       - name: Set Global Environment
         run: |
           cd gta9
@@ -117,7 +97,7 @@ jobs:
           echo "PATH=$PWD/build/build-tools/path/linux-x86:\$PATH" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=$CLANG_ROOT/compat-libs:\$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
-      # 7. THE BUILD EXECUTION
+      # 7. THE BUILD
       - name: Execute Kernel Build
         env:
           ARCH: arm64
@@ -128,16 +108,15 @@ jobs:
           OUT_DIR: out
           DIST_DIR: out
           BUILD_CONFIG: out/build.config
-          HOSTCC: /usr/bin/gcc
-          HOSTCXX: /usr/bin/g++
-          HOSTLD: /usr/bin/gcc
+          # Gunakan Native Clang Ubuntu untuk Host agar fixdep sukses
+          HOSTCC: /usr/bin/clang
+          HOSTCXX: /usr/bin/clang++
+          HOSTLD: /usr/bin/ld.lld
           KCFLAGS: "-Wno-error"
         run: |
           set -eux
           cd gta9
-          # Paksa izin eksekusi dan jalankan via bash untuk menghindari Permission Denied
-          chmod +x build/build.sh
-          bash ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc -j"$(($(nproc)-1))"
+          ./build/build.sh LLVM_IAS=1 -j"$(($(nproc)-1))"
 
       # 8. RESULT EXTRACTION
       - name: Package and Upload
@@ -147,7 +126,7 @@ jobs:
           cd gta9
           mkdir -p package
           find out -type f -name 'Image.gz' -exec cp {} package/ \; 2>/dev/null || true
-          find out -type f -name '*.dtb' -exec cp {} package/ \; 2>/dev/null || true
+          find out -type f -name '*.dtb' -exec cp {} package/ \; 2>/dev///true
           find out -type f -name '*.dtbo' -exec cp {} package/ \; 2>/dev/null || true
           cp out/build.config package/ 2>/dev/null || true
           cd package && zip -r ../kernel-gta9-x110.zip .
