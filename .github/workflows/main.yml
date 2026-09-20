@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-ULTIMATE-FINAL
+name: PROJECT-OPICK-X110-LAST-STAND
 
 on:
   workflow_dispatch:
@@ -13,11 +13,13 @@ jobs:
       GCC_VERSION: "11"
 
     steps:
+      # 1. INSTALL ALL POSSIBLE DEPENDENCIES
       - name: Install Host Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang lld curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev
 
+      # 2. CLONE SOURCE
       - name: Clone Source & Submodules
         run: |
           git clone --depth=1 --branch 15.0 https://github.com/prabhatkrmishra/kernel_samsung_gta9.git gta9
@@ -25,12 +27,13 @@ jobs:
           git submodule sync --recursive
           git submodule update --init --depth=1
 
+      # 3. TOOLCHAIN SETUP (CACHE)
       - name: Cache Android Clang
         id: cache-clang
         uses: actions/cache@v3
         with:
           path: gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
-          key: clang-${{ env.CLANG_VERSION }}
+          key: clang-ultimate-${{ env.CLANG_VERSION }}
 
       - name: Download Android Clang
         if: steps.cache-clang.outputs.cache-hit != 'true'
@@ -40,7 +43,8 @@ jobs:
           mkdir -p gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
           tar -xzf gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}.tar.gz -C gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
 
-      - name: Configure Samsung Build Layout
+      # 4. THE ULTIMATE WRAPPER SYSTEM (Sapu Jagat)
+      - name: Configure Build Layout & Wrappers
         run: |
           cd gta9
           ln -sf . kernel-5.10
@@ -50,21 +54,22 @@ jobs:
           TOOL_DIR="$PWD/build/build-tools/path/linux-x86"
           mkdir -p "$TOOL_DIR"
 
-          # WRAPPER: Menghapus flag yang bikin GCC error
+          # Wrapper Clang: Buang rtlib, buang nostdinc, paksa GCC Ubuntu
           cat <<EOF > "$TOOL_DIR/clang"
           #!/bin/bash
           ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
-          exec /usr/bin/gcc \$ARGS
+          exec /usr/bin/gcc -D__GCC_VERSION=110000 \$ARGS
           EOF
           chmod +x "$TOOL_DIR/clang"
 
           cat <<EOF > "$TOOL_DIR/clang++"
           #!/bin/bash
           ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
-          exec /usr/bin/g++ \$ARGS
+          exec /usr/bin/g++ -D__GCC_VERSION=110000 \$ARGS
           EOF
           chmod +x "$TOOL_DIR/clang++"
 
+          # Wrapper LLD: Paksa lihat folder library Ubuntu
           cat <<EOF > "$TOOL_DIR/ld.lld"
           #!/bin/bash
           exec "$CLANG_ROOT/bin/ld.lld" -L/usr/lib/x86_64-linux-gnu -L/usr/lib "\$@"
@@ -74,6 +79,7 @@ jobs:
           ln -sf "$TOOL_DIR/ld.lld" "$TOOL_DIR/lld"
           ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
 
+          # KUNCI: Pindahkan semua alat bantu ke TOOL_DIR agar tidak hilang saat PATH di-overwrite
           COMMANDS="python3 env bash flex bison echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
           for cmd in $COMMANDS; do
             target="$(type -P "$cmd" || true)"
@@ -85,6 +91,7 @@ jobs:
           SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
           ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
 
+      # 5. CONFIGURATION (Anti-False Success)
       - name: Generate Build Config
         run: |
           cd gta9
@@ -96,13 +103,12 @@ jobs:
             --kernel-defconfig-overlays "entry_level.config ot11.config ot11_data.config ot11_wifi.config" \
             -m user -o out/build.config
 
+      # 6. GLOBAL ENVIRONMENT
       - name: Set Global Environment
         run: |
           cd gta9
           CLANG_ROOT="$PWD/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}"
           CLANG_RES=$("$CLANG_ROOT/bin/clang-12" -print-resource-dir)
-          GCC_MACH="$(gcc -dumpmachine)"
-          GCC_VER="$(gcc -dumpversion)"
           
           sed -i "s#^CLANG_PREBUILT_BIN=.*#CLANG_PREBUILT_BIN=$CLANG_ROOT/bin#" out/build.config
 
@@ -111,6 +117,7 @@ jobs:
           echo "PATH=$PWD/build/build-tools/path/linux-x86:\$PATH" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=$CLANG_ROOT/compat-libs:\$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
+      # 7. THE BUILD EXECUTION
       - name: Execute Kernel Build
         env:
           ARCH: arm64
@@ -128,8 +135,11 @@ jobs:
         run: |
           set -eux
           cd gta9
-          ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc -j"$(($(nproc)-1))"
+          # Paksa izin eksekusi dan jalankan via bash untuk menghindari Permission Denied
+          chmod +x build/build.sh
+          bash ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc -j"$(($(nproc)-1))"
 
+      # 8. RESULT EXTRACTION
       - name: Package and Upload
         if: always()
         run: |
