@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-ULTIMATE
+name: PROJECT-OPICK-X110-FINAL-FIX
 
 on:
   workflow_dispatch:
@@ -10,15 +10,13 @@ jobs:
       TZ: Asia/Jakarta
       CLANG_VERSION: "clang-r416183b"
       CLANG_URL: "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12L-gsi/clang-r416183b.tar.gz"
-      # Paksa versi GCC agar Samsung tidak error '00000 invalid for GCC_VERSION'
-      GCC_VERSION: "11"
 
     steps:
       # 1. INSTALL DEPENDENCIES
       - name: Install Host Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang lld curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev
+          sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev lld make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev
 
       # 2. CLONE SOURCE & KERNELSU
       - name: Clone Source & Submodules
@@ -44,4 +42,113 @@ jobs:
           mkdir -p gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
           tar -xzf gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}.tar.gz -C gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
 
-      # 4. SAMSUNG BUILD SYSTEM LAYOUT & THE
+      # 4. SAMSUNG BUILD SYSTEM LAYOUT & WRAPPER
+      - name: Configure Samsung Build Layout and Wrapper
+        run: |
+          cd gta9
+          ln -sf . kernel-5.10
+          ln -sf setup/kernel/build build
+          
+          CLANG_ROOT="$PWD/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}"
+          TOOL_DIR="$PWD/build/build-tools/path/linux-x86"
+          mkdir -p "$TOOL_DIR"
+
+          # WRAPPER: Menghapus flag yang bikin GCC error
+          cat <<EOF > "$TOOL_DIR/clang"
+          #!/bin/bash
+          ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
+          exec /usr/bin/gcc \$ARGS
+          EOF
+          chmod +x "$TOOL_DIR/clang"
+
+          cat <<EOF > "$TOOL_DIR/clang++"
+          #!/bin/bash
+          ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
+          exec /usr/bin/g++ \$ARGS
+          EOF
+          chmod +x "$TOOL_DIR/clang++"
+
+          cp -f "$CLANG_ROOT/bin/ld.lld" "$TOOL_DIR/lld" 2>/dev/null || cp -f "$CLANG_ROOT/bin/ld.lld" "$TOOL_DIR/lld"
+          ln -sf lld "$TOOL_DIR/ld.lld"
+          ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
+
+          COMMANDS="python3 env bash flex bison echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
+          for cmd in $COMMANDS; do
+            target="$(type -P "$cmd" || true)"
+            [ -n "$target" ] && ln -sf "$target" "$TOOL_DIR/$cmd"
+          done
+
+          COMPAT_DIR="$CLANG_ROOT/compat-libs"
+          mkdir -p "$COMPAT_DIR"
+          SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
+          ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
+
+      # 5. GENERATE CONFIG
+      - name: Generate Build Config
+        run: |
+          cd gta9
+          python3 -m lib2to3 -w scripts/gen_build_config.py
+          mkdir -p out
+          python3 scripts/gen_build_config.py \
+            --kernel-defconfig gta9_00_defconfig \
+            --kernel-defconfig-overlays "entry_level.config ot11.config ot11_data.config ot11_wifi.config" \
+            -m user -o out/build.config
+
+      # 6. ENV INJECTION
+      - name: Set Global Environment
+        run: |
+          cd gta9
+          CLANG_ROOT="$PWD/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}"
+          CLANG_RES=$("$CLANG_ROOT/bin/clang-12" -print-resource-dir)
+          GCC_MACH="$(gcc -dumpmachine)"
+          GCC_VER="$(gcc -dumpversion)"
+          
+          sed -i "s#^CLANG_PREBUILT_BIN=.*#CLANG_PREBUILT_BIN=$CLANG_ROOT/bin#" out/build.config
+
+          echo "PATH=$PWD/build/build-tools/path/linux-x86:\$PATH" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$CLANG_ROOT/compat-libs:\$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu:/usr/include" >> $GITHUB_ENV
+          echo "CPLUS_INCLUDE_PATH=/usr/include/x86_64-linux-gnu:/usr/include" >> $GITHUB_ENV
+
+      # 7. THE BUILD (SANGAT PENTING!)
+      - name: Execute Kernel Build
+        env:
+          ARCH: arm64
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CROSS_COMPILE_COMPAT: arm-linux-gnueabi-
+          LLVM: "1"
+          LLVM_IAS: "1"
+          OUT_DIR: out
+          DIST_DIR: out
+          BUILD_CONFIG: out/build.config
+          HOSTCC: /usr/bin/gcc
+          HOSTCXX: /usr/bin/g++
+          HOSTLD: /usr/bin/gcc
+          KCFLAGS: "-Wno-error"
+        run: |
+          set -eux
+          cd gta9
+          ./build/build.sh LLVM_IAS=1 -j"$(($(nproc)-1))"
+
+      # 8. RESULT EXTRACTION
+      - name: Package and Upload
+        if: always()
+        run: |
+          set -eux
+          cd gta9
+          mkdir -p package
+          find out -type f -name 'Image.gz' -exec cp {} package/ \; 2>/dev/null || true
+          find out -type f -name '*.dtb' -exec cp {} package/ \; 2>/dev/null || true
+          find out -type f -name '*.dtbo' -exec cp {} package/ \; 2>/dev/null || true
+          cp out/build.config package/ 2>/dev/null || true
+          cd package && zip -r ../kernel-gta9-x110.zip .
+          
+      - name: Upload Final Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-gta9-x110
+          path: |
+            gta9/kernel-gta9-x110.zip
+            gta9/out/.config
+          retention-days: 7
