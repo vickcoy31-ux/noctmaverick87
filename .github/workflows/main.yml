@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-FINAL-ULTIMATE
+name: PROJECT-OPICK-X110-LAST-STAND
 
 on:
   workflow_dispatch:
@@ -10,7 +10,6 @@ jobs:
       TZ: Asia/Jakarta
       CLANG_VERSION: "clang-r416183b"
       CLANG_URL: "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12L-gsi/clang-r416183b.tar.gz"
-      GCC_VERSION: "11"
 
     steps:
       # 1. INSTALL DEPENDENCIES
@@ -33,7 +32,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
-          key: clang-final-fixed-${{ env.CLANG_VERSION }}
+          key: last-stand-${{ env.CLANG_VERSION }}
 
       - name: Download Android Clang
         if: steps.cache-clang.outputs.cache-hit != 'true'
@@ -43,8 +42,8 @@ jobs:
           mkdir -p gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
           tar -xzf gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}.tar.gz -C gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
 
-      # 4. SAMSUNG BUILD SYSTEM LAYOUT (Native Host Tools)
-      - name: Configure Samsung Build Layout
+      # 4. THE ULTIMATE WRAPPER SYSTEM
+      - name: Configure Samsung Build Layout and Wrappers
         run: |
           cd gta9
           ln -sf . kernel-5.10
@@ -54,13 +53,32 @@ jobs:
           TOOL_DIR="$PWD/build/build-tools/path/linux-x86"
           mkdir -p "$TOOL_DIR"
 
-          # KUNCI: Gunakan Native Ubuntu Tools agar tidak error crt1.o / sys/types.h
-          ln -sf /usr/bin/clang "$TOOL_DIR/clang"
-          ln -sf /usr/bin/clang++ "$TOOL_DIR/clang++"
-          ln -sf /usr/bin/ld.lld "$TOOL_DIR/ld.lld"
-          ln -sf /usr/bin/ld.lld "$TOOL_DIR/lld"
+          # WRAPPER CLANG: Buang semua penghalang, paksa versi GCC 11
+          cat <<EOF > "$TOOL_DIR/clang"
+          #!/bin/bash
+          ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
+          exec /usr/bin/gcc -D__GCC_VERSION=110000 \$ARGS
+          EOF
+          chmod +x "$TOOL_DIR/clang"
+
+          cat <<EOF > "$TOOL_DIR/clang++"
+          #!/bin/bash
+          ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
+          exec /usr/bin/g++ -D__GCC_VERSION=110000 \$ARGS
+          EOF
+          chmod +x "$TOOL_DIR/clang++"
+
+          # WRAPPER LLD: Cari pondasi Ubuntu (crt1.o)
+          cat <<EOF > "$TOOL_DIR/ld.lld"
+          #!/bin/bash
+          exec "$CLANG_ROOT/bin/ld.lld" -L/usr/lib/x86_64-linux-gnu -L/usr/lib "\$@"
+          EOF
+          chmod +x "$TOOL_DIR/ld.lld"
+
+          ln -sf "$TOOL_DIR/ld.lld" "$TOOL_DIR/lld"
           ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
 
+          # KUNCI: Masukkan semua alat bantu agar tidak 'Not Found' saat PATH di-overwrite
           COMMANDS="python3 env bash flex bison echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
           for cmd in $COMMANDS; do
             target="$(type -P "$cmd" || true)"
@@ -72,14 +90,13 @@ jobs:
           SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
           ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
 
-      # 5. GENERATE CONFIG (FIXED TYPO)
+      # 5. GENERATE CONFIG
       - name: Generate Build Config
         run: |
           cd gta9
           rm -rf out
           mkdir -p out
           python3 -m lib2to3 -w scripts/gen_build_config.py
-          # PERBAIKAN: Nama file sudah benar (gen_build_config.py)
           python3 scripts/gen_build_config.py \
             --kernel-defconfig gta9_00_defconfig \
             --kernel-defconfig-overlays "entry_level.config ot11.config ot11_data.config ot11_wifi.config" \
@@ -91,8 +108,6 @@ jobs:
           cd gta9
           CLANG_ROOT="$PWD/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}"
           CLANG_RES=$("$CLANG_ROOT/bin/clang-12" -print-resource-dir)
-          GCC_MACH="$(gcc -dumpmachine)"
-          GCC_VER="$(gcc -dumpversion)"
           
           sed -i "s#^CLANG_PREBUILT_BIN=.*#CLANG_PREBUILT_BIN=$CLANG_ROOT/bin#" out/build.config
 
@@ -101,7 +116,7 @@ jobs:
           echo "PATH=$PWD/build/build-tools/path/linux-x86:\$PATH" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=$CLANG_ROOT/compat-libs:\$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
-      # 7. THE BUILD
+      # 7. THE BUILD EXECUTION
       - name: Execute Kernel Build
         env:
           ARCH: arm64
@@ -112,6 +127,7 @@ jobs:
           OUT_DIR: out
           DIST_DIR: out
           BUILD_CONFIG: out/build.config
+          # Gunakan HOSTCC standard, biarkan wrapper di TOOL_DIR yang bekerja
           HOSTCC: /usr/bin/gcc
           HOSTCXX: /usr/bin/g++
           HOSTLD: /usr/bin/gcc
@@ -120,7 +136,7 @@ jobs:
           set -eux
           cd gta9
           chmod +x build/build.sh
-          bash ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc -j"$(($(nproc)-1))"
+          bash ./build/build.sh LLVM_IAS=1 -j"$(($(nproc)-1))"
 
       # 8. RESULT EXTRACTION
       - name: Package and Upload
