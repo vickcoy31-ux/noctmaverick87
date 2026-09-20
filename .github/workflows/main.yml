@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-FINAL-FIXED
+name: PROJECT-OPICK-X110-FINAL-STRIKE
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang lld curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev device-tree-compiler
 
-      # 2. CLONE SOURCE & KERNELSU
+      # 2. CLONE SOURCE & SUBMODULES
       - name: Clone Source & Submodules
         run: |
           git clone --depth=1 --branch 15.0 https://github.com/prabhatkrmishra/kernel_samsung_gta9.git gta9
@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
-          key: final-fixed-v3-${{ env.CLANG_VERSION }}
+          key: final-strike-v2-${{ env.CLANG_VERSION }}
 
       - name: Download Android Clang
         if: steps.cache-clang.outputs.cache-hit != 'true'
@@ -54,7 +54,7 @@ jobs:
           TOOL_DIR="$PWD/build/build-tools/path/linux-x86"
           mkdir -p "$TOOL_DIR"
 
-          # KUNCI: Gunakan Native Ubuntu Tools agar tidak error crt1.o / sys/types.h
+          # Menggunakan Native Ubuntu Tools untuk menghindari error crt1.o / sys/types.h
           ln -sf /usr/bin/clang "$TOOL_DIR/clang"
           ln -sf /usr/bin/clang++ "$TOOL_DIR/clang++"
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/ld.lld"
@@ -64,4 +64,81 @@ jobs:
           COMMANDS="python3 env bash flex bison echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
           for cmd in $COMMANDS; do
             target="$(type -P "$cmd" || true)"
-            [ -n "$target"
+            [ -n "$target" ] && ln -sf "$target" "$TOOL_DIR/$cmd"
+          done
+
+          COMPAT_DIR="$CLANG_ROOT/compat-libs"
+          mkdir -p "$COMPAT_DIR"
+          SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
+          ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
+
+      # 5. GENERATE CONFIG (Clean & No Typo)
+      - name: Generate Build Config
+        run: |
+          cd gta9
+          rm -rf out
+          mkdir -p out
+          # Memastikan tidak ada // pada path script
+          python3 -m lib2to3 -w scripts/gen_build_config.py
+          python3 scripts/gen_build_config.py \
+            --kernel-defconfig gta9_00_defconfig \
+            --kernel-defconfig-overlays "entry_level.config ot11.config ot11_data.config ot11_wifi.config" \
+            -m user -o out/build.config
+
+      # 6. ENV INJECTION
+      - name: Set Global Environment
+        run: |
+          cd gta9
+          CLANG_ROOT="$PWD/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}"
+          
+          sed -i "s#^CLANG_PREBUILT_BIN=.*#CLANG_PREBUILT_BIN=$CLANG_ROOT/bin#" out/build.config
+
+          echo "C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu:/usr/include" >> $GITHUB_ENV
+          echo "CPLUS_INCLUDE_PATH=/usr/include/x86_64-linux-gnu:/usr/include" >> $GITHUB_ENV
+          echo "PATH=$PWD/build/build-tools/path/linux-x86:\$PATH" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$CLANG_ROOT/compat-libs:\$LD_LIBRARY_PATH" >> $GITHUB_ENV
+
+      # 7. THE BUILD EXECUTION
+      - name: Execute Kernel Build
+        env:
+          ARCH: arm64
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CROSS_COMPILE_COMPAT: arm-linux-gnueabi-
+          LLVM: "1"
+          LLVM_IAS: "1"
+          OUT_DIR: out
+          DIST_DIR: out
+          BUILD_CONFIG: out/build.config
+          HOSTCC: /usr/bin/gcc
+          HOSTCXX: /usr/bin/g++
+          HOSTLD: /usr/bin/gcc
+          KCFLAGS: "-Wno-error"
+        run: |
+          set -eux
+          cd gta9
+          chmod +x build/build.sh
+          # Menjalankan build dengan DTC native agar stabil
+          bash ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc DTC=/usr/bin/dtc -j"$(($(nproc)-1))"
+
+      # 8. RESULT EXTRACTION
+      - name: Package and Upload
+        if: always()
+        run: |
+          set -eux
+          cd gta9
+          mkdir -p package
+          find out -type f -name 'Image.gz' -exec cp {} package/ \; 2>/dev/null || true
+          find out -type f -name '*.dtb' -exec cp {} package/ \; 2>/dev/null || true
+          find out -type f -name '*.dtbo' -exec cp {} package/ \; 2>/dev/null || true
+          cp out/build.config package/ 2>/dev/null || true
+          cd package && zip -r ../kernel-gta9-x110.zip .
+          
+      - name: Upload Final Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-gta9-x110
+          path: |
+            gta9/kernel-gta9-x110.zip
+            gta9/out/.config
+          retention-days: 7
