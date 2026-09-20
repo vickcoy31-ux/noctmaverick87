@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-ULTIMATE-FINAL-FIXED
+name: PROJECT-OPICK-X110-FINAL-ULTIMATE
 
 on:
   workflow_dispatch:
@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
-          key: clang-final-fix-${{ env.CLANG_VERSION }}
+          key: clang-final-fixed-${{ env.CLANG_VERSION }}
 
       - name: Download Android Clang
         if: steps.cache-clang.outputs.cache-hit != 'true'
@@ -54,7 +54,7 @@ jobs:
           TOOL_DIR="$PWD/build/build-tools/path/linux-x86"
           mkdir -p "$TOOL_DIR"
 
-          # KUNCI: Gunakan Native Ubuntu Tools untuk HOST agar tidak error crt1.o / sys/types.h
+          # KUNCI: Gunakan Native Ubuntu Tools agar tidak error crt1.o / sys/types.h
           ln -sf /usr/bin/clang "$TOOL_DIR/clang"
           ln -sf /usr/bin/clang++ "$TOOL_DIR/clang++"
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/ld.lld"
@@ -72,14 +72,15 @@ jobs:
           SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
           ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
 
-      # 5. GENERATE CONFIG
+      # 5. GENERATE CONFIG (FIXED TYPO)
       - name: Generate Build Config
         run: |
           cd gta9
           rm -rf out
           mkdir -p out
           python3 -m lib2to3 -w scripts/gen_build_config.py
-          python3 scripts/gen_//build_config.py \
+          # PERBAIKAN: Nama file sudah benar (gen_build_config.py)
+          python3 scripts/gen_build_config.py \
             --kernel-defconfig gta9_00_defconfig \
             --kernel-defconfig-overlays "entry_level.config ot11.config ot11_data.config ot11_wifi.config" \
             -m user -o out/build.config
@@ -118,19 +119,16 @@ jobs:
         run: |
           set -eux
           cd gta9
-          # Paksa izin eksekusi
           chmod +x build/build.sh
-          # Jalankan dengan bash untuk kestabilan
           bash ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc -j"$(($(nproc)-1))"
 
-      # 8. RESULT EXTRACTION (Fixed find syntax)
+      # 8. RESULT EXTRACTION
       - name: Package and Upload
         if: always()
         run: |
           set -eux
           cd gta9
           mkdir -p package
-          # Perbaikan sintaks find agar tidak Permission Denied
           find out -type f -name 'Image.gz' -exec cp {} package/ \; 2>/dev/null || true
           find out -type f -name '*.dtb' -exec cp {} package/ \; 2>/dev/null || true
           find out -type f -name '*.dtbo' -exec cp {} package/ \; 2>/dev/null || true
