@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-FINAL-FIXED
+name: PROJECT-OPICK-X110-ULTIMATE-FINAL
 
 on:
   workflow_dispatch:
@@ -10,13 +10,14 @@ jobs:
       TZ: Asia/Jakarta
       CLANG_VERSION: "clang-r416183b"
       CLANG_URL: "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12L-gsi/clang-r416183b.tar.gz"
+      GCC_VERSION: "11"
 
     steps:
       # 1. INSTALL DEPENDENCIES
       - name: Install Host Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev lld make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev
+          sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang lld curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev
 
       # 2. CLONE SOURCE & KERNELSU
       - name: Clone Source & Submodules
@@ -42,8 +43,8 @@ jobs:
           mkdir -p gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
           tar -xzf gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}.tar.gz -C gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
 
-      # 4. SAMSUNG BUILD SYSTEM LAYOUT & WRAPPER
-      - name: Configure Samsung Build Layout and Wrapper
+      # 4. SAMSUNG BUILD SYSTEM LAYOUT
+      - name: Configure Samsung Build Layout
         run: |
           cd gta9
           ln -sf . kernel-5.10
@@ -53,24 +54,14 @@ jobs:
           TOOL_DIR="$PWD/build/build-tools/path/linux-x86"
           mkdir -p "$TOOL_DIR"
 
-          cat <<EOF > "$TOOL_DIR/clang"
-          #!/bin/bash
-          ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
-          exec /usr/bin/gcc \$ARGS
-          EOF
-          chmod +x "$TOOL_DIR/clang"
-
-          cat <<EOF > "$TOOL_DIR/clang++"
-          #!/bin/bash
-          ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
-          exec /usr/bin/g++ \$ARGS
-          EOF
-          chmod +x "$TOOL_DIR/clang++"
-
+          # Link binaries
+          cp -f "$CLANG_ROOT/bin/clang-12" "$TOOL_DIR/clang"
+          cp -f "$CLANG_ROOT/bin/clang-12" "$TOOL_DIR/clang++"
           cp -f "$CLANG_ROOT/bin/ld.lld" "$TOOL_DIR/lld" 2>/dev/null || cp -f "$CLANG_ROOT/bin/ld.lld" "$TOOL_DIR/lld"
           ln -sf lld "$TOOL_DIR/ld.lld"
           ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
 
+          # KUNCI: Masukkan alat dasar ke TOOL_DIR agar tidak hilang saat PATH di-overwrite
           COMMANDS="python3 env bash flex bison echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
           for cmd in $COMMANDS; do
             target="$(type -P "$cmd" || true)"
@@ -104,12 +95,13 @@ jobs:
           
           sed -i "s#^CLANG_PREBUILT_BIN=.*#CLANG_PREBUILT_BIN=$CLANG_ROOT/bin#" out/build.config
 
-          echo "PATH=$PWD/build/build-tools/path/linux-x86:\$PATH" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=$CLANG_ROOT/compat-libs:\$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          # Force Include Path agar compiler tidak tersesat
           echo "C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu:/usr/include" >> $GITHUB_ENV
           echo "CPLUS_INCLUDE_PATH=/usr/include/x86_64-linux-gnu:/usr/include" >> $GITHUB_ENV
+          echo "PATH=$PWD/build/build-tools/path/linux-x86:\$PATH" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$CLANG_ROOT/compat-libs:\$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
-      # 7. THE BUILD
+      # 7. THE BUILD (SANGAT PENTING!)
       - name: Execute Kernel Build
         env:
           ARCH: arm64
@@ -120,6 +112,9 @@ jobs:
           OUT_DIR: out
           DIST_DIR: out
           BUILD_CONFIG: out/build.config
+          # PAKSA KBUILD_HOSTCC menggunakan GCC Ubuntu agar tidak error sys/types.h
+          KBUILD_HOSTCC: gcc
+          KBUILD_HOSTCXX: g++
           HOSTCC: /usr/bin/gcc
           HOSTCXX: /usr/bin/g++
           HOSTLD: /usr/bin/gcc
@@ -127,9 +122,11 @@ jobs:
         run: |
           set -eux
           cd gta9
-          # PERBAIKAN: Paksa izin eksekusi dan panggil menggunakan bash untuk menghindari 'Permission Denied'
-          chmod +x build/build.sh
-          bash ./build/build.sh LLVM_IAS=1 -j"$(($(nproc)-1))"
+          # Hapus folder out agar tidak terjadi 'Sukses Palsu' karena cache config
+          rm -rf out
+          mkdir -p out
+          # Jalankan build dengan memaksa HOSTCC via argument
+          ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc -j"$(($(nproc)-1))"
 
       # 8. RESULT EXTRACTION
       - name: Package and Upload
