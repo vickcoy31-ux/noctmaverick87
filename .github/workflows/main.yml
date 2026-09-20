@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-FINAL-STRIKE
+name: PROJECT-OPICK-X110-ULTIMATE-FINAL-FIXED
 
 on:
   workflow_dispatch:
@@ -10,15 +10,16 @@ jobs:
       TZ: Asia/Jakarta
       CLANG_VERSION: "clang-r416183b"
       CLANG_URL: "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12L-gsi/clang-r416183b.tar.gz"
+      GCC_VERSION: "11"
 
     steps:
-      # 1. INSTALL DEPENDENCIES (Paksa instal Clang & LLD Ubuntu)
+      # 1. INSTALL DEPENDENCIES
       - name: Install Host Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang lld curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev
 
-      # 2. CLONE SOURCE
+      # 2. CLONE SOURCE & KERNELSU
       - name: Clone Source & Submodules
         run: |
           git clone --depth=1 --branch 15.0 https://github.com/prabhatkrmishra/kernel_samsung_gta9.git gta9
@@ -26,13 +27,13 @@ jobs:
           git submodule sync --recursive
           git submodule update --init --depth=1
 
-      # 3. TOOLCHAIN SETUP (CACHE)
+      # 3. TOOLCHAIN SETUP (WITH CACHE)
       - name: Cache Android Clang
         id: cache-clang
         uses: actions/cache@v3
         with:
           path: gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
-          key: clang-final-${{ env.CLANG_VERSION }}
+          key: clang-final-fix-${{ env.CLANG_VERSION }}
 
       - name: Download Android Clang
         if: steps.cache-clang.outputs.cache-hit != 'true'
@@ -42,7 +43,7 @@ jobs:
           mkdir -p gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
           tar -xzf gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}.tar.gz -C gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
 
-      # 4. SAMSUNG BUILD SYSTEM LAYOUT (The Native Approach)
+      # 4. SAMSUNG BUILD SYSTEM LAYOUT (Native Host Tools)
       - name: Configure Samsung Build Layout
         run: |
           cd gta9
@@ -53,7 +54,7 @@ jobs:
           TOOL_DIR="$PWD/build/build-tools/path/linux-x86"
           mkdir -p "$TOOL_DIR"
 
-          # KUNCI: Gunakan CLANG UBUNTU (Native) untuk tools agar tidak error rtlib & sys/types.h
+          # KUNCI: Gunakan Native Ubuntu Tools untuk HOST agar tidak error crt1.o / sys/types.h
           ln -sf /usr/bin/clang "$TOOL_DIR/clang"
           ln -sf /usr/bin/clang++ "$TOOL_DIR/clang++"
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/ld.lld"
@@ -78,7 +79,7 @@ jobs:
           rm -rf out
           mkdir -p out
           python3 -m lib2to3 -w scripts/gen_build_config.py
-          python3 scripts/gen_build_config.py \
+          python3 scripts/gen_//build_config.py \
             --kernel-defconfig gta9_00_defconfig \
             --kernel-defconfig-overlays "entry_level.config ot11.config ot11_data.config ot11_wifi.config" \
             -m user -o out/build.config
@@ -89,6 +90,8 @@ jobs:
           cd gta9
           CLANG_ROOT="$PWD/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}"
           CLANG_RES=$("$CLANG_ROOT/bin/clang-12" -print-resource-dir)
+          GCC_MACH="$(gcc -dumpmachine)"
+          GCC_VER="$(gcc -dumpversion)"
           
           sed -i "s#^CLANG_PREBUILT_BIN=.*#CLANG_PREBUILT_BIN=$CLANG_ROOT/bin#" out/build.config
 
@@ -108,25 +111,28 @@ jobs:
           OUT_DIR: out
           DIST_DIR: out
           BUILD_CONFIG: out/build.config
-          # Gunakan Native Clang Ubuntu untuk Host agar fixdep sukses
-          HOSTCC: /usr/bin/clang
-          HOSTCXX: /usr/bin/clang++
-          HOSTLD: /usr/bin/ld.lld
+          HOSTCC: /usr/bin/gcc
+          HOSTCXX: /usr/bin/g++
+          HOSTLD: /usr/bin/gcc
           KCFLAGS: "-Wno-error"
         run: |
           set -eux
           cd gta9
-          ./build/build.sh LLVM_IAS=1 -j"$(($(nproc)-1))"
+          # Paksa izin eksekusi
+          chmod +x build/build.sh
+          # Jalankan dengan bash untuk kestabilan
+          bash ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc -j"$(($(nproc)-1))"
 
-      # 8. RESULT EXTRACTION
+      # 8. RESULT EXTRACTION (Fixed find syntax)
       - name: Package and Upload
         if: always()
         run: |
           set -eux
           cd gta9
           mkdir -p package
+          # Perbaikan sintaks find agar tidak Permission Denied
           find out -type f -name 'Image.gz' -exec cp {} package/ \; 2>/dev/null || true
-          find out -type f -name '*.dtb' -exec cp {} package/ \; 2>/dev///true
+          find out -type f -name '*.dtb' -exec cp {} package/ \; 2>/dev/null || true
           find out -type f -name '*.dtbo' -exec cp {} package/ \; 2>/dev/null || true
           cp out/build.config package/ 2>/dev/null || true
           cd package && zip -r ../kernel-gta9-x110.zip .
