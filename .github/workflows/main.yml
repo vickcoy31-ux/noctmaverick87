@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-LAST-STAND
+name: PROJECT-OPICK-X110-FINAL-STRIKE
 
 on:
   workflow_dispatch:
@@ -16,9 +16,9 @@ jobs:
       - name: Install Host Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang lld curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev
+          sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang lld curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev device-tree-compiler
 
-      # 2. CLONE SOURCE & KERNELSU
+      # 2. CLONE SOURCE
       - name: Clone Source & Submodules
         run: |
           git clone --depth=1 --branch 15.0 https://github.com/prabhatkrmishra/kernel_samsung_gta9.git gta9
@@ -26,13 +26,13 @@ jobs:
           git submodule sync --recursive
           git submodule update --init --depth=1
 
-      # 3. TOOLCHAIN SETUP (WITH CACHE)
+      # 3. TOOLCHAIN SETUP
       - name: Cache Android Clang
         id: cache-clang
         uses: actions/cache@v3
         with:
           path: gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
-          key: last-stand-${{ env.CLANG_VERSION }}
+          key: final-strike-${{ env.CLANG_VERSION }}
 
       - name: Download Android Clang
         if: steps.cache-clang.outputs.cache-hit != 'true'
@@ -42,8 +42,8 @@ jobs:
           mkdir -p gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
           tar -xzf gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}.tar.gz -C gta9/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}
 
-      # 4. THE ULTIMATE WRAPPER SYSTEM
-      - name: Configure Samsung Build Layout and Wrappers
+      # 4. SAMSUNG LAYOUT & PATH FIX
+      - name: Configure Samsung Build Layout
         run: |
           cd gta9
           ln -sf . kernel-5.10
@@ -53,32 +53,13 @@ jobs:
           TOOL_DIR="$PWD/build/build-tools/path/linux-x86"
           mkdir -p "$TOOL_DIR"
 
-          # WRAPPER CLANG: Buang semua penghalang, paksa versi GCC 11
-          cat <<EOF > "$TOOL_DIR/clang"
-          #!/bin/bash
-          ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
-          exec /usr/bin/gcc -D__GCC_VERSION=110000 \$ARGS
-          EOF
-          chmod +x "$TOOL_DIR/clang"
-
-          cat <<EOF > "$TOOL_DIR/clang++"
-          #!/bin/bash
-          ARGS=\$(echo "\$@" | sed 's/--rtlib=compiler-rt//g' | sed 's/-nostdinc//g' | sed 's/-isystem [^ ]*//g')
-          exec /usr/bin/g++ -D__GCC_VERSION=110000 \$ARGS
-          EOF
-          chmod +x "$TOOL_DIR/clang++"
-
-          # WRAPPER LLD: Cari pondasi Ubuntu (crt1.o)
-          cat <<EOF > "$TOOL_DIR/ld.lld"
-          #!/bin/bash
-          exec "$CLANG_ROOT/bin/ld.lld" -L/usr/lib/x86_64-linux-gnu -L/usr/lib "\$@"
-          EOF
-          chmod +x "$TOOL_DIR/ld.lld"
-
-          ln -sf "$TOOL_DIR/ld.lld" "$TOOL_DIR/lld"
+          # Gunakan Native Tools agar tidak error sys/types.h & crt1.o
+          ln -sf /usr/bin/clang "$TOOL_DIR/clang"
+          ln -sf /usr/bin/clang++ "$TOOL_DIR/clang++"
+          ln -sf /usr/bin/ld.lld "$TOOL_DIR/ld.lld"
+          ln -sf /usr/bin/ld.lld "$TOOL_DIR/lld"
           ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
 
-          # KUNCI: Masukkan semua alat bantu agar tidak 'Not Found' saat PATH di-overwrite
           COMMANDS="python3 env bash flex bison echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
           for cmd in $COMMANDS; do
             target="$(type -P "$cmd" || true)"
@@ -90,17 +71,20 @@ jobs:
           SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
           ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
 
-      # 5. GENERATE CONFIG
+      # 5. GENERATE CONFIG & FIX GCC_VERSION
       - name: Generate Build Config
         run: |
           cd gta9
           rm -rf out
           mkdir -p out
           python3 -m lib2to3 -w scripts/gen_build_config.py
-          python3 scripts/gen_build_config.py \
+          python3 scripts/gen_//build_config.py \
             --kernel-defconfig gta9_00_defconfig \
             --kernel-defconfig-overlays "entry_level.config ot11.config ot11_data.config ot11_wifi.config" \
             -m user -o out/build.config
+          
+          # KUNCI: Paksa GCC_VERSION agar tidak muncul error '00000 invalid'
+          sed -i 's/CONFIG_GCC_VERSION=00000/CONFIG_GCC_VERSION="11"/' out/build.config 2>/dev/null || true
 
       # 6. ENV INJECTION
       - name: Set Global Environment
@@ -116,7 +100,7 @@ jobs:
           echo "PATH=$PWD/build/build-tools/path/linux-x86:\$PATH" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=$CLANG_ROOT/compat-libs:\$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
-      # 7. THE BUILD EXECUTION
+      # 7. THE BUILD (SANGAT PENTING!)
       - name: Execute Kernel Build
         env:
           ARCH: arm64
@@ -124,10 +108,10 @@ jobs:
           CROSS_COMPILE_COMPAT: arm-linux-gnueabi-
           LLVM: "1"
           LLVM_IAS: "1"
+          DTC: /usr/bin/dtc
           OUT_DIR: out
           DIST_DIR: out
           BUILD_CONFIG: out/build.config
-          # Gunakan HOSTCC standard, biarkan wrapper di TOOL_DIR yang bekerja
           HOSTCC: /usr/bin/gcc
           HOSTCXX: /usr/bin/g++
           HOSTLD: /usr/bin/gcc
@@ -136,7 +120,8 @@ jobs:
           set -eux
           cd gta9
           chmod +x build/build.sh
-          bash ./build/build.sh LLVM_IAS=1 -j"$(($(nproc)-1))"
+          # Jalankan build dengan memaksa DTC native agar tidak error 'no such instruction'
+          bash ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc DTC=/usr/bin/dtc -j"$(($(nproc)-1))"
 
       # 8. RESULT EXTRACTION
       - name: Package and Upload
