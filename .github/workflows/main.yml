@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-FINAL-STRIKE-V4.6-BC-FIX
+name: PROJECT-OPICK-X110-FINAL-STRIKE-V4.7-COREUTILS-FIX
 
 on:
   workflow_dispatch:
@@ -250,7 +250,7 @@ jobs:
           "$TOOL_DIR/clang" -### --target=aarch64-linux-gnu -mcpu=cortex-a55 \
             -c /tmp/dispatch-target.c -o /tmp/dispatch-target2.o 2>&1 | head -n 40
 
-          COMMANDS="python3 env bash flex bison bc echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
+          COMMANDS="python3 env bash flex bison bc echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln ls md5sum mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip xz make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
           for cmd in $COMMANDS; do
             target="$(type -P "$cmd" || true)"
             [ -n "$target" ] && ln -sf "$target" "$TOOL_DIR/$cmd"
@@ -261,12 +261,15 @@ jobs:
           SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
           ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
 
-          echo "===== VERIFY V4.6 HOST TOOL LINKS ====="
+          echo "===== VERIFY V4.7 HOST TOOL LINKS ====="
           ls -l "$TOOL_DIR/dtc" "$TOOL_DIR/nl" "$TOOL_DIR/bc"
           "$TOOL_DIR/dtc" --version | head -n 1
           "$TOOL_DIR/nl" --version | head -n 1 || true
           "$TOOL_DIR/bc" --version | head -n 1
+          "$TOOL_DIR/ls" --version | head -n 1
+          "$TOOL_DIR/md5sum" --version | head -n 1
           printf '1+1\n' | "$TOOL_DIR/bc" -q | grep -qx '2'
+          "$TOOL_DIR/xz" --version | head -n 1
 
       # 5. GENERATE CONFIG (Clean & No Typo)
       - name: Generate Build Config
@@ -313,8 +316,11 @@ jobs:
           set -eux
           cd gta9
           chmod +x build/build.sh
-          echo "===== PRE-BUILD BC CHECK ====="
+          echo "===== PRE-BUILD HOST TOOL CHECK ====="
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v bc
+          PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v ls
+          PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v md5sum
+          PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v xz
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" bc --version | head -n 1
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" printf '250\n' | bc -q "$PWD/kernel-5.10/kernel/time/timeconst.bc" >/tmp/timeconst-probe.h
           test -s /tmp/timeconst-probe.h
