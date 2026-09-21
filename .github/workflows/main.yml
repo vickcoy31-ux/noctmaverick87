@@ -192,9 +192,12 @@ jobs:
           set -eux
           cd gta9
           chmod +x build/build.sh
-          # V4: DTC command remains the original explicit native path.
-          # The TOOL_DIR/dtc link above protects the internal build.sh PATH.
-          bash ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc DTC=/usr/bin/dtc -j"$(($(nproc)-1))"
+          # V4.3: Keep HOSTCC/HOSTCXX/HOSTLD only in the job environment.
+          # Do not pass them as build.sh arguments. With LLVM=1, the
+          # TOOL_DIR/clang and clang++ wrappers handle host compilation.
+          # DTC remains the explicit native path, while TOOL_DIR/dtc protects
+          # the internal build.sh PATH.
+          bash ./build/build.sh LLVM_IAS=1 DTC=/usr/bin/dtc -j"$(($(nproc)-1))"
 
       # 8. RESULT EXTRACTION
       - name: Package and Upload
