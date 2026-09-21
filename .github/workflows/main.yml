@@ -17,7 +17,7 @@ jobs:
       - name: Install Host Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang lld curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev device-tree-compiler
+          sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang lld curl file gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev device-tree-compiler
 
       # 2. CLONE SOURCE & SUBMODULES
       - name: Clone Source & Submodules
@@ -61,61 +61,85 @@ jobs:
           ln -sf /usr/bin/dtc "$TOOL_DIR/dtc"
           ln -sf /usr/bin/nl "$TOOL_DIR/nl"
 
-          # V4.4.1 CLANG DISPATCHER:
+          # V4.5 CLANG DISPATCHER:
           #
-          # Previous GCC-only wrapper fixed host linking, but also caught
-          # ARM64 kernel compilation and forwarded -mlittle-endian to x86 GCC.
+          # The previous dispatcher had two subtle problems:
+          #   1) "clang --version" was routed to GCC, so Kbuild believed CC
+          #      was GCC and did not add --target=aarch64-linux-gnu.
+          #   2) ARM64 invocations were forwarded to Android clang without
+          #      forcing an ARM64 target.
           #
-          # Dispatch policy:
-          #   ARM64-specific flags present -> Android clang-r416183b
-          #   otherwise                  -> native Ubuntu GCC/G++
-          #
-          # Host-only clang flags are stripped only on the GCC path.
+          # Fix both problems:
+          #   - version/probe queries go to Android clang
+          #   - ARM64 compile invocations always get --target=aarch64-linux-gnu
+          #   - host invocations still go to Ubuntu GCC/G++
           CLANG_ROOT="$CLANG_ROOT"
 
           cat > "$TOOL_DIR/clang" <<'EOF'
           #!/usr/bin/env bash
           set -e
-
+          
           TARGET=0
-
+          HAS_TARGET=0
+          
           for arg in "$@"; do
-            case "$arg" in
-              --target=aarch64*|--target=arm64*|-mlittle-endian|-mbig-endian|-mabi=lp64|-mabi=lp64f|-mabi=lp64d|-mno-outline-atomics|-moutline-atomics|-march=armv8*|-march=arm9*|-mcpu=cortex-a*|-mcpu=neoverse*|-mstrict-align)
-                TARGET=1
-                ;;
-            esac
+          case "$arg" in
+          --target=*)
+          HAS_TARGET=1
+          TARGET=1
+          ;;
+          -target)
+          HAS_TARGET=1
+          TARGET=1
+          ;;
+          -mlittle-endian|-mbig-endian|-mabi=lp64|-mabi=lp64f|-mabi=lp64d|-mno-outline-atomics|-moutline-atomics|-march=armv8*|-march=arm9*|-mcpu=cortex-a*|-mcpu=neoverse*|-mstrict-align)
+          TARGET=1
+          ;;
+          esac
           done
-
+          
+          # Kbuild probes "CC --version" to decide whether to inject CLANG_FLAGS.
+          # Never send that probe to GCC, or Kbuild will omit --target.
+          for arg in "$@"; do
+          case "$arg" in
+          --version|-dumpversion)
+          exec "__CLANG_ROOT__/bin/clang" "$@"
+          ;;
+          esac
+          done
+          
           if [ "$TARGET" -eq 1 ]; then
-            exec "__CLANG_ROOT__/bin/clang" "$@"
+          if [ "$HAS_TARGET" -eq 0 ]; then
+          exec "__CLANG_ROOT__/bin/clang" --target=aarch64-linux-gnu "$@"
           fi
-
+          exec "__CLANG_ROOT__/bin/clang" "$@"
+          fi
+          
           args=()
           skip_next=0
-
+          
           for arg in "$@"; do
-            if [ "$skip_next" -eq 1 ]; then
-              skip_next=0
-              continue
-            fi
-
-            case "$arg" in
-              --rtlib=compiler-rt)
-                ;;
-              -nostdinc)
-                ;;
-              -isystem)
-                skip_next=1
-                ;;
-              -fuse-ld=lld)
-                ;;
-              *)
-                args+=("$arg")
-                ;;
-            esac
+          if [ "$skip_next" -eq 1 ]; then
+          skip_next=0
+          continue
+          fi
+          
+          case "$arg" in
+          --rtlib=compiler-rt)
+          ;;
+          -nostdinc)
+          ;;
+          -isystem)
+          skip_next=1
+          ;;
+          -fuse-ld=lld)
+          ;;
+          *)
+          args+=("$arg")
+          ;;
+          esac
           done
-
+          
           exec /usr/bin/gcc "${args[@]}"
           EOF
           chmod +x "$TOOL_DIR/clang"
@@ -123,75 +147,104 @@ jobs:
           cat > "$TOOL_DIR/clang++" <<'EOF'
           #!/usr/bin/env bash
           set -e
-
+          
           TARGET=0
-
+          HAS_TARGET=0
+          
           for arg in "$@"; do
-            case "$arg" in
-              --target=aarch64*|--target=arm64*|-mlittle-endian|-mbig-endian|-mabi=lp64|-mabi=lp64f|-mabi=lp64d|-mno-outline-atomics|-moutline-atomics|-march=armv8*|-march=arm9*|-mcpu=cortex-a*|-mcpu=neoverse*|-mstrict-align)
-                TARGET=1
-                ;;
-            esac
+          case "$arg" in
+          --target=*)
+          HAS_TARGET=1
+          TARGET=1
+          ;;
+          -target)
+          HAS_TARGET=1
+          TARGET=1
+          ;;
+          -mlittle-endian|-mbig-endian|-mabi=lp64|-mabi=lp64f|-mabi=lp64d|-mno-outline-atomics|-moutline-atomics|-march=armv8*|-march=arm9*|-mcpu=cortex-a*|-mcpu=neoverse*|-mstrict-align)
+          TARGET=1
+          ;;
+          esac
           done
-
+          
+          for arg in "$@"; do
+          case "$arg" in
+          --version|-dumpversion)
+          exec "__CLANG_ROOT__/bin/clang++" "$@"
+          ;;
+          esac
+          done
+          
           if [ "$TARGET" -eq 1 ]; then
-            exec "__CLANG_ROOT__/bin/clang++" "$@"
+          if [ "$HAS_TARGET" -eq 0 ]; then
+          exec "__CLANG_ROOT__/bin/clang++" --target=aarch64-linux-gnu "$@"
           fi
-
+          exec "__CLANG_ROOT__/bin/clang++" "$@"
+          fi
+          
           args=()
           skip_next=0
-
+          
           for arg in "$@"; do
-            if [ "$skip_next" -eq 1 ]; then
-              skip_next=0
-              continue
-            fi
-
-            case "$arg" in
-              --rtlib=compiler-rt)
-                ;;
-              -nostdinc)
-                ;;
-              -isystem)
-                skip_next=1
-                ;;
-              -fuse-ld=lld)
-                ;;
-              *)
-                args+=("$arg")
-                ;;
-            esac
+          if [ "$skip_next" -eq 1 ]; then
+          skip_next=0
+          continue
+          fi
+          
+          case "$arg" in
+          --rtlib=compiler-rt)
+          ;;
+          -nostdinc)
+          ;;
+          -isystem)
+          skip_next=1
+          ;;
+          -fuse-ld=lld)
+          ;;
+          *)
+          args+=("$arg")
+          ;;
+          esac
           done
-
+          
           exec /usr/bin/g++ "${args[@]}"
           EOF
           chmod +x "$TOOL_DIR/clang++"
 
-          # Embed the absolute Android clang path into both wrappers because
-          # the wrapper runs in the later build step, where CLANG_ROOT is not
-          # otherwise guaranteed to exist.
+          # Embed the absolute Android clang path into both wrappers.
           sed -i "s#__CLANG_ROOT__#$CLANG_ROOT#g" "$TOOL_DIR/clang" "$TOOL_DIR/clang++"
 
+          # Make CLANG_PREBUILT_BIN point at the dispatch directory itself.
+          # _setup_env.sh prepends CLANG_PREBUILT_BIN to PATH, so this makes
+          # the dispatcher the actual "clang" seen by build.sh/Kbuild.
+          for tool in "$CLANG_ROOT"/bin/llvm-* "$CLANG_ROOT"/bin/ld.lld; do
+            [ -e "$tool" ] || continue
+            ln -sf "$tool" "$TOOL_DIR/$(basename "$tool")"
+          done
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/ld.lld"
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/lld"
           ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
 
-          echo "===== VERIFY V4.4.1 CLANG DISPATCHER ====="
-
+          echo "===== VERIFY V4.5 CLANG DISPATCHER ====="
           printf 'int main(void){return 0;}\n' > /tmp/dispatch-host.c
           "$TOOL_DIR/clang" -c /tmp/dispatch-host.c -o /tmp/dispatch-host.o
           test -s /tmp/dispatch-host.o
 
           printf 'void x(void){}\n' > /tmp/dispatch-target.c
-          "$TOOL_DIR/clang" -mlittle-endian -c /tmp/dispatch-target.c -o /tmp/dispatch-target.o
+          "$TOOL_DIR/clang" -mlittle-endian -mcpu=cortex-a55 \
+            -c /tmp/dispatch-target.c -o /tmp/dispatch-target.o
           test -s /tmp/dispatch-target.o
+          file /tmp/dispatch-target.o
+          readelf -h /tmp/dispatch-target.o | grep -E 'Class:|Machine:'
+          readelf -h /tmp/dispatch-target.o | grep -q 'Machine:.*AArch64'
 
           echo "HOST DISPATCH TEST: OK"
           echo "ARM64 DISPATCH TEST: OK"
 
-          echo "===== VERIFY V4.2 HOST CLANG WRAPPERS ====="
+          echo "===== VERIFY CLANG TARGET ====="
           "$TOOL_DIR/clang" --version | head -n 2
-          "$TOOL_DIR/clang++" --version | head -n 2
+          "$TOOL_DIR/clang" -### --target=aarch64-linux-gnu -mcpu=cortex-a55 \
+            -c /tmp/dispatch-target.c -o /tmp/dispatch-target2.o 2>&1 | head -n 40
 
           COMMANDS="python3 env bash flex bison echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
           for cmd in $COMMANDS; do
@@ -204,7 +257,7 @@ jobs:
           SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
           ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
 
-          echo "===== VERIFY V4 TOOL LINKS ====="
+          echo "===== VERIFY V4 HOST TOOL LINKS ====="
           ls -l "$TOOL_DIR/dtc" "$TOOL_DIR/nl"
           "$TOOL_DIR/dtc" --version | head -n 1
           "$TOOL_DIR/nl" --version | head -n 1 || true
@@ -228,7 +281,7 @@ jobs:
           cd gta9
           CLANG_ROOT="$PWD/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}"
 
-          sed -i "s#^CLANG_PREBUILT_BIN=.*#CLANG_PREBUILT_BIN=$CLANG_ROOT/bin#" out/build.config
+          sed -i "s#^CLANG_PREBUILT_BIN=.*#CLANG_PREBUILT_BIN=$PWD/build/build-tools/path/linux-x86#" out/build.config
 
           echo "C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu:/usr/include" >> $GITHUB_ENV
           echo "CPLUS_INCLUDE_PATH=/usr/include/x86_64-linux-gnu:/usr/include" >> $GITHUB_ENV
@@ -254,29 +307,60 @@ jobs:
           set -eux
           cd gta9
           chmod +x build/build.sh
-          # V4.4.1: Keep HOSTCC/HOSTCXX/HOSTLD only in the job environment.
-          # Do not pass them as build.sh arguments. The TOOL_DIR clang
-          # dispatcher sends host invocations to GCC and ARM64 invocations
-          # to Android clang-r416183b.
+          # V4.5: Keep HOSTCC/HOSTCXX/HOSTLD in the job environment; dispatcher handles LLVM host/target split.
+          # Do not pass them as build.sh arguments. LLVM=1 makes build.sh use
+          # clang for CC/HOSTCC; the TOOL_DIR dispatcher sends host invocations
+          # to GCC and ARM64 invocations to Android clang-r416183b.
           # DTC remains the explicit native path; TOOL_DIR/dtc protects
           # the internal build.sh PATH.
-          bash ./build/build.sh LLVM_IAS=1 DTC=/usr/bin/dtc -j"$(($(nproc)-1))"
+          bash ./build/build.sh LLVM_IAS=1 DTC=/usr/bin/dtc V=1 -j"$(($(nproc)-1))"
 
-      # 8. RESULT EXTRACTION
-      - name: Package and Upload
-        if: always()
+      # 8. RESULT EXTRACTION / HARD VALIDATION
+      - name: Package Valid Kernel Artifacts
+        if: success()
         run: |
-          set -eux
+          set -euxo pipefail
           cd gta9
+
+          rm -rf package kernel-gta9-x110.zip
           mkdir -p package
-          find out -type f -name 'Image.gz' -exec cp {} package/ \; 2>/dev/null || true
-          find out -type f -name '*.dtb' -exec cp {} package/ \; 2>/dev/null || true
-          find out -type f -name '*.dtbo' -exec cp {} package/ \; 2>/dev/null || true
-          cp out/build.config package/ 2>/dev/null || true
-          cd package && zip -r ../kernel-gta9-x110.zip .
+
+          IMAGE="$(find out -type f -name 'Image.gz' -print -quit)"
+          DTB="$(find out -type f -name 'mt6789.dtb' -print -quit)"
+          DTBO="$(find out -type f -name 'mt8781_gta9_eur_open_00.dtbo' -print -quit)"
+
+          test -n "$IMAGE"
+          test -n "$DTB"
+          test -n "$DTBO"
+          test -s "$IMAGE"
+          test -s "$DTB"
+          test -s "$DTBO"
+          test -s out/.config
+          test -s out/build.config
+
+          cp "$IMAGE" package/Image.gz
+          cp "$DTB" package/mt6789.dtb
+          cp "$DTBO" package/mt8781_gta9_eur_open_00.dtbo
+          cp out/.config package/.config
+          cp out/build.config package/build.config
+
+          echo "===== FINAL ARTIFACT VALIDATION ====="
+          ls -lh package
+          file package/Image.gz package/mt6789.dtb package/mt8781_gta9_eur_open_00.dtbo
+          gzip -t package/Image.gz
+
+          cd package
+          zip -9 -r ../kernel-gta9-x110.zip .
+          cd ..
+
+          test -s kernel-gta9-x110.zip
+          unzip -l kernel-gta9-x110.zip
+          unzip -l kernel-gta9-x110.zip | grep -q 'Image.gz'
+          unzip -l kernel-gta9-x110.zip | grep -q 'mt6789.dtb'
+          unzip -l kernel-gta9-x110.zip | grep -q 'mt8781_gta9_eur_open_00.dtbo'
 
       - name: Upload Final Artifacts
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: kernel-gta9-x110
