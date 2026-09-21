@@ -49,10 +49,16 @@ jobs:
           cd gta9
           ln -sf . kernel-5.10
           ln -sf setup/kernel/build build
-          
+
           CLANG_ROOT="$PWD/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}"
           TOOL_DIR="$PWD/build/build-tools/path/linux-x86"
           mkdir -p "$TOOL_DIR"
+
+          # V4 FIX:
+          # build.sh rewrites PATH internally and later invokes "dtc" and "nl".
+          # Keep those exact command names available in TOOL_DIR.
+          ln -sf /usr/bin/dtc "$TOOL_DIR/dtc"
+          ln -sf /usr/bin/nl "$TOOL_DIR/nl"
 
           # Menggunakan Native Ubuntu Tools untuk menghindari error crt1.o / sys/types.h
           ln -sf /usr/bin/clang "$TOOL_DIR/clang"
@@ -72,6 +78,11 @@ jobs:
           SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
           ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
 
+          echo "===== VERIFY V4 TOOL LINKS ====="
+          ls -l "$TOOL_DIR/dtc" "$TOOL_DIR/nl"
+          "$TOOL_DIR/dtc" --version | head -n 1
+          "$TOOL_DIR/nl" --version | head -n 1 || true
+
       # 5. GENERATE CONFIG (Clean & No Typo)
       - name: Generate Build Config
         run: |
@@ -90,7 +101,7 @@ jobs:
         run: |
           cd gta9
           CLANG_ROOT="$PWD/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}"
-          
+
           sed -i "s#^CLANG_PREBUILT_BIN=.*#CLANG_PREBUILT_BIN=$CLANG_ROOT/bin#" out/build.config
 
           echo "C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu:/usr/include" >> $GITHUB_ENV
@@ -117,7 +128,8 @@ jobs:
           set -eux
           cd gta9
           chmod +x build/build.sh
-          # Menjalankan build dengan DTC native agar stabil
+          # V4: DTC command remains the original explicit native path.
+          # The TOOL_DIR/dtc link above protects the internal build.sh PATH.
           bash ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc DTC=/usr/bin/dtc -j"$(($(nproc)-1))"
 
       # 8. RESULT EXTRACTION
@@ -132,7 +144,7 @@ jobs:
           find out -type f -name '*.dtbo' -exec cp {} package/ \; 2>/dev/null || true
           cp out/build.config package/ 2>/dev/null || true
           cd package && zip -r ../kernel-gta9-x110.zip .
-          
+
       - name: Upload Final Artifacts
         if: always()
         uses: actions/upload-artifact@v4
