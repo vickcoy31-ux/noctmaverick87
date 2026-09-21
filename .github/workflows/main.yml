@@ -60,12 +60,76 @@ jobs:
           ln -sf /usr/bin/dtc "$TOOL_DIR/dtc"
           ln -sf /usr/bin/nl "$TOOL_DIR/nl"
 
-          # Menggunakan Native Ubuntu Tools untuk menghindari error crt1.o / sys/types.h
-          ln -sf /usr/bin/clang "$TOOL_DIR/clang"
-          ln -sf /usr/bin/clang++ "$TOOL_DIR/clang++"
+          # V4.2 HOST CLANG COMPATIBILITY:
+          # With LLVM=1, Kbuild uses "clang" for host tools such as fixdep.
+          # The native /usr/bin/clang + the hermetic PATH/LLD layout produced
+          # missing Scrt1.o, crti.o, crtn.o, libgcc_s and libc.
+          #
+          # The previously working path used a small clang/clang++ wrapper
+          # that delegates host compilation to Ubuntu GCC/G++, while keeping
+          # the Android clang-r416183b toolchain available for the kernel
+          # target through CLANG_PREBUILT_BIN.
+          cat > "$TOOL_DIR/clang" <<'EOF'
+          #!/usr/bin/env bash
+          set -e
+          args=()
+          skip_next=0
+          for arg in "$@"; do
+            if [ "$skip_next" -eq 1 ]; then
+              skip_next=0
+              continue
+            fi
+            case "$arg" in
+              --rtlib=compiler-rt)
+                ;;
+              -nostdinc)
+                ;;
+              -isystem)
+                skip_next=1
+                ;;
+              *)
+                args+=("$arg")
+                ;;
+            esac
+          done
+          exec /usr/bin/gcc "${args[@]}"
+          EOF
+          chmod +x "$TOOL_DIR/clang"
+
+          cat > "$TOOL_DIR/clang++" <<'EOF'
+          #!/usr/bin/env bash
+          set -e
+          args=()
+          skip_next=0
+          for arg in "$@"; do
+            if [ "$skip_next" -eq 1 ]; then
+              skip_next=0
+              continue
+            fi
+            case "$arg" in
+              --rtlib=compiler-rt)
+                ;;
+              -nostdinc)
+                ;;
+              -isystem)
+                skip_next=1
+                ;;
+              *)
+                args+=("$arg")
+                ;;
+            esac
+          done
+          exec /usr/bin/g++ "${args[@]}"
+          EOF
+          chmod +x "$TOOL_DIR/clang++"
+
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/ld.lld"
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/lld"
           ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
+
+          echo "===== VERIFY V4.2 HOST CLANG WRAPPERS ====="
+          "$TOOL_DIR/clang" --version | head -n 2
+          "$TOOL_DIR/clang++" --version | head -n 2
 
           COMMANDS="python3 env bash flex bison echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
           for cmd in $COMMANDS; do
@@ -128,12 +192,9 @@ jobs:
           set -eux
           cd gta9
           chmod +x build/build.sh
-          # V4.1: Keep HOSTCC/HOSTCXX/HOSTLD in the job environment only.
-          # Do not pass them as build.sh arguments: the observed failure was
-          # gcc receiving --rtlib=compiler-rt when HOSTCC=gcc was forced.
-          # DTC remains the explicit native path; TOOL_DIR/dtc protects the
-          # internal build.sh PATH.
-          bash ./build/build.sh LLVM_IAS=1 DTC=/usr/bin/dtc -j"$(($(nproc)-1))"
+          # V4: DTC command remains the original explicit native path.
+          # The TOOL_DIR/dtc link above protects the internal build.sh PATH.
+          bash ./build/build.sh LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ HOSTLD=gcc DTC=/usr/bin/dtc -j"$(($(nproc)-1))"
 
       # 8. RESULT EXTRACTION
       - name: Package and Upload
