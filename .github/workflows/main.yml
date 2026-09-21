@@ -60,25 +60,45 @@ jobs:
           ln -sf /usr/bin/dtc "$TOOL_DIR/dtc"
           ln -sf /usr/bin/nl "$TOOL_DIR/nl"
 
-          # V4.2 HOST CLANG COMPATIBILITY:
-          # With LLVM=1, Kbuild uses "clang" for host tools such as fixdep.
-          # The native /usr/bin/clang + the hermetic PATH/LLD layout produced
-          # missing Scrt1.o, crti.o, crtn.o, libgcc_s and libc.
+          # V4.4 CLANG DISPATCHER:
           #
-          # The previously working path used a small clang/clang++ wrapper
-          # that delegates host compilation to Ubuntu GCC/G++, while keeping
-          # the Android clang-r416183b toolchain available for the kernel
-          # target through CLANG_PREBUILT_BIN.
+          # Previous GCC-only wrapper fixed host linking, but also caught
+          # ARM64 kernel compilation and forwarded -mlittle-endian to x86 GCC.
+          #
+          # Dispatch policy:
+          #   ARM64-specific flags present -> Android clang-r416183b
+          #   otherwise                  -> native Ubuntu GCC/G++
+          #
+          # Host-only clang flags are stripped only on the GCC path.
+          CLANG_ROOT="$CLANG_ROOT"
+
           cat > "$TOOL_DIR/clang" <<'EOF'
           #!/usr/bin/env bash
           set -e
+
+          TARGET=0
+
+          for arg in "$@"; do
+            case "$arg" in
+              --target=aarch64*|--target=arm64*|-mlittle-endian|-mbig-endian|-mabi=lp64|-mabi=lp64f|-mabi=lp64d|-mno-outline-atomics|-moutline-atomics|-march=armv8*|-march=arm9*|-mcpu=cortex-a*|-mcpu=neoverse*|-mstrict-align)
+                TARGET=1
+                ;;
+            esac
+          done
+
+          if [ "$TARGET" -eq 1 ]; then
+            exec "$CLANG_ROOT/bin/clang" "$@"
+          fi
+
           args=()
           skip_next=0
+
           for arg in "$@"; do
             if [ "$skip_next" -eq 1 ]; then
               skip_next=0
               continue
             fi
+
             case "$arg" in
               --rtlib=compiler-rt)
                 ;;
@@ -87,11 +107,14 @@ jobs:
               -isystem)
                 skip_next=1
                 ;;
+              -fuse-ld=lld)
+                ;;
               *)
                 args+=("$arg")
                 ;;
             esac
           done
+
           exec /usr/bin/gcc "${args[@]}"
           EOF
           chmod +x "$TOOL_DIR/clang"
@@ -99,13 +122,30 @@ jobs:
           cat > "$TOOL_DIR/clang++" <<'EOF'
           #!/usr/bin/env bash
           set -e
+
+          TARGET=0
+
+          for arg in "$@"; do
+            case "$arg" in
+              --target=aarch64*|--target=arm64*|-mlittle-endian|-mbig-endian|-mabi=lp64|-mabi=lp64f|-mabi=lp64d|-mno-outline-atomics|-moutline-atomics|-march=armv8*|-march=arm9*|-mcpu=cortex-a*|-mcpu=neoverse*|-mstrict-align)
+                TARGET=1
+                ;;
+            esac
+          done
+
+          if [ "$TARGET" -eq 1 ]; then
+            exec "$CLANG_ROOT/bin/clang++" "$@"
+          fi
+
           args=()
           skip_next=0
+
           for arg in "$@"; do
             if [ "$skip_next" -eq 1 ]; then
               skip_next=0
               continue
             fi
+
             case "$arg" in
               --rtlib=compiler-rt)
                 ;;
@@ -114,11 +154,14 @@ jobs:
               -isystem)
                 skip_next=1
                 ;;
+              -fuse-ld=lld)
+                ;;
               *)
                 args+=("$arg")
                 ;;
             esac
           done
+
           exec /usr/bin/g++ "${args[@]}"
           EOF
           chmod +x "$TOOL_DIR/clang++"
@@ -126,6 +169,19 @@ jobs:
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/ld.lld"
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/lld"
           ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
+
+          echo "===== VERIFY V4.4 CLANG DISPATCHER ====="
+
+          printf 'int main(void){return 0;}\\n' > /tmp/dispatch-host.c
+          "$TOOL_DIR/clang" -c /tmp/dispatch-host.c -o /tmp/dispatch-host.o
+          test -s /tmp/dispatch-host.o
+
+          printf 'void x(void){}\\n' > /tmp/dispatch-target.c
+          "$TOOL_DIR/clang" -mlittle-endian -c /tmp/dispatch-target.c -o /tmp/dispatch-target.o
+          test -s /tmp/dispatch-target.o
+
+          echo "HOST DISPATCH TEST: OK"
+          echo "ARM64 DISPATCH TEST: OK"
 
           echo "===== VERIFY V4.2 HOST CLANG WRAPPERS ====="
           "$TOOL_DIR/clang" --version | head -n 2
@@ -192,10 +248,11 @@ jobs:
           set -eux
           cd gta9
           chmod +x build/build.sh
-          # V4.3: Keep HOSTCC/HOSTCXX/HOSTLD only in the job environment.
-          # Do not pass them as build.sh arguments. With LLVM=1, the
-          # TOOL_DIR/clang and clang++ wrappers handle host compilation.
-          # DTC remains the explicit native path, while TOOL_DIR/dtc protects
+          # V4.4: Keep HOSTCC/HOSTCXX/HOSTLD only in the job environment.
+          # Do not pass them as build.sh arguments. The TOOL_DIR clang
+          # dispatcher sends host invocations to GCC and ARM64 invocations
+          # to Android clang-r416183b.
+          # DTC remains the explicit native path; TOOL_DIR/dtc protects
           # the internal build.sh PATH.
           bash ./build/build.sh LLVM_IAS=1 DTC=/usr/bin/dtc -j"$(($(nproc)-1))"
 
