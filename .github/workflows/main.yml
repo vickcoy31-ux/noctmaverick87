@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-FINAL-STRIKE-V4.7-COREUTILS-FIX
+name: PROJECT-OPICK-X110-FINAL-STRIKE-V4.8-KHEADERS-FIX
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ jobs:
       - name: Install Host Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex build-essential ca-certificates ccache clang lld curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev device-tree-compiler
+          sudo apt-get install -y bc cpio perl bison flex build-essential ca-certificates ccache clang lld curl gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libelf-dev libssl-dev libxml2 libxml2-dev make python3 python3-distutils rsync unzip wget xz-utils zip coreutils linux-libc-dev device-tree-compiler
 
           echo "===== VERIFY REQUIRED HOST TOOLS ====="
           command -v bc
@@ -250,7 +250,7 @@ jobs:
           "$TOOL_DIR/clang" -### --target=aarch64-linux-gnu -mcpu=cortex-a55 \
             -c /tmp/dispatch-target.c -o /tmp/dispatch-target2.o 2>&1 | head -n 40
 
-          COMMANDS="python3 env bash flex bison bc echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln ls md5sum mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip xz make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
+          COMMANDS="python3 env bash flex bison bc cpio perl echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln ls md5sum mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip xz make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
           for cmd in $COMMANDS; do
             target="$(type -P "$cmd" || true)"
             [ -n "$target" ] && ln -sf "$target" "$TOOL_DIR/$cmd"
@@ -261,8 +261,8 @@ jobs:
           SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
           ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
 
-          echo "===== VERIFY V4.7 HOST TOOL LINKS ====="
-          ls -l "$TOOL_DIR/dtc" "$TOOL_DIR/nl" "$TOOL_DIR/bc"
+          echo "===== VERIFY V4.8 HOST TOOL LINKS ====="
+          ls -l "$TOOL_DIR/dtc" "$TOOL_DIR/nl" "$TOOL_DIR/bc" "$TOOL_DIR/cpio" "$TOOL_DIR/perl"
           "$TOOL_DIR/dtc" --version | head -n 1
           "$TOOL_DIR/nl" --version | head -n 1 || true
           "$TOOL_DIR/bc" --version | head -n 1
@@ -270,6 +270,8 @@ jobs:
           "$TOOL_DIR/md5sum" --version | head -n 1
           printf '1+1\n' | "$TOOL_DIR/bc" -q | grep -qx '2'
           "$TOOL_DIR/xz" --version | head -n 1
+          "$TOOL_DIR/cpio" --version | head -n 1
+          "$TOOL_DIR/perl" --version | head -n 2
 
       # 5. GENERATE CONFIG (Clean & No Typo)
       - name: Generate Build Config
@@ -321,6 +323,8 @@ jobs:
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v ls
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v md5sum
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v xz
+          PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v cpio
+          PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v perl
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" bc --version | head -n 1
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" printf '250\n' | bc -q "$PWD/kernel-5.10/kernel/time/timeconst.bc" >/tmp/timeconst-probe.h
           test -s /tmp/timeconst-probe.h
