@@ -51,6 +51,7 @@ jobs:
           ln -sf setup/kernel/build build
 
           CLANG_ROOT="$PWD/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}"
+          export CLANG_ROOT
           TOOL_DIR="$PWD/build/build-tools/path/linux-x86"
           mkdir -p "$TOOL_DIR"
 
@@ -60,7 +61,7 @@ jobs:
           ln -sf /usr/bin/dtc "$TOOL_DIR/dtc"
           ln -sf /usr/bin/nl "$TOOL_DIR/nl"
 
-          # V4.4 CLANG DISPATCHER:
+          # V4.4.1 CLANG DISPATCHER:
           #
           # Previous GCC-only wrapper fixed host linking, but also caught
           # ARM64 kernel compilation and forwarded -mlittle-endian to x86 GCC.
@@ -87,7 +88,7 @@ jobs:
           done
 
           if [ "$TARGET" -eq 1 ]; then
-            exec "$CLANG_ROOT/bin/clang" "$@"
+            exec "__CLANG_ROOT__/bin/clang" "$@"
           fi
 
           args=()
@@ -134,7 +135,7 @@ jobs:
           done
 
           if [ "$TARGET" -eq 1 ]; then
-            exec "$CLANG_ROOT/bin/clang++" "$@"
+            exec "__CLANG_ROOT__/bin/clang++" "$@"
           fi
 
           args=()
@@ -166,17 +167,22 @@ jobs:
           EOF
           chmod +x "$TOOL_DIR/clang++"
 
+          # Embed the absolute Android clang path into both wrappers because
+          # the wrapper runs in the later build step, where CLANG_ROOT is not
+          # otherwise guaranteed to exist.
+          sed -i "s#__CLANG_ROOT__#$CLANG_ROOT#g" "$TOOL_DIR/clang" "$TOOL_DIR/clang++"
+
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/ld.lld"
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/lld"
           ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
 
-          echo "===== VERIFY V4.4 CLANG DISPATCHER ====="
+          echo "===== VERIFY V4.4.1 CLANG DISPATCHER ====="
 
-          printf 'int main(void){return 0;}\\n' > /tmp/dispatch-host.c
+          printf 'int main(void){return 0;}\n' > /tmp/dispatch-host.c
           "$TOOL_DIR/clang" -c /tmp/dispatch-host.c -o /tmp/dispatch-host.o
           test -s /tmp/dispatch-host.o
 
-          printf 'void x(void){}\\n' > /tmp/dispatch-target.c
+          printf 'void x(void){}\n' > /tmp/dispatch-target.c
           "$TOOL_DIR/clang" -mlittle-endian -c /tmp/dispatch-target.c -o /tmp/dispatch-target.o
           test -s /tmp/dispatch-target.o
 
@@ -248,7 +254,7 @@ jobs:
           set -eux
           cd gta9
           chmod +x build/build.sh
-          # V4.4: Keep HOSTCC/HOSTCXX/HOSTLD only in the job environment.
+          # V4.4.1: Keep HOSTCC/HOSTCXX/HOSTLD only in the job environment.
           # Do not pass them as build.sh arguments. The TOOL_DIR clang
           # dispatcher sends host invocations to GCC and ARM64 invocations
           # to Android clang-r416183b.
