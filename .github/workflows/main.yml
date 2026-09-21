@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-FINAL-STRIKE-V4.9-GZIP-FIX
+name: PROJECT-OPICK-X110-FINAL-STRIKE-V4.10-TRUE-FIX
 
 on:
   workflow_dispatch:
@@ -67,11 +67,17 @@ jobs:
           # Keep those exact command names available in TOOL_DIR.
           ln -sf /usr/bin/dtc "$TOOL_DIR/dtc"
           ln -sf /usr/bin/nl "$TOOL_DIR/nl"
+
           # Kernel Kbuild invokes "bc" by command name while build.sh rewrites PATH.
           # Keep bc in the same private path to remove any PATH ambiguity.
           ln -sf /usr/bin/bc "$TOOL_DIR/bc"
+
           # Kernel Kbuild also invokes gzip by command name; keep it in TOOL_DIR.
           ln -sf /usr/bin/gzip "$TOOL_DIR/gzip"
+
+          # arch/arm64/Makefile.postlink invokes "true" by command name.
+          # build.sh rewrites PATH, so keep the coreutils binary in TOOL_DIR.
+          ln -sf /usr/bin/true "$TOOL_DIR/true"
 
           # V4.5 CLANG DISPATCHER:
           #
@@ -90,10 +96,10 @@ jobs:
           cat > "$TOOL_DIR/clang" <<'EOF'
           #!/usr/bin/env bash
           set -e
-          
+
           TARGET=0
           HAS_TARGET=0
-          
+
           for arg in "$@"; do
           case "$arg" in
           --target=*)
@@ -108,7 +114,7 @@ jobs:
           ;;
           esac
           done
-          
+
           # Kbuild probes "CC --version" to decide whether to inject CLANG_FLAGS.
           # Never send that probe to GCC, or Kbuild will omit --target.
           for arg in "$@"; do
@@ -118,23 +124,23 @@ jobs:
           ;;
           esac
           done
-          
+
           if [ "$TARGET" -eq 1 ]; then
           if [ "$HAS_TARGET" -eq 0 ]; then
           exec "__CLANG_ROOT__/bin/clang" --target=aarch64-linux-gnu "$@"
           fi
           exec "__CLANG_ROOT__/bin/clang" "$@"
           fi
-          
+
           args=()
           skip_next=0
-          
+
           for arg in "$@"; do
           if [ "$skip_next" -eq 1 ]; then
           skip_next=0
           continue
           fi
-          
+
           case "$arg" in
           --rtlib=compiler-rt)
           ;;
@@ -150,7 +156,7 @@ jobs:
           ;;
           esac
           done
-          
+
           exec /usr/bin/gcc "${args[@]}"
           EOF
           chmod +x "$TOOL_DIR/clang"
@@ -158,10 +164,10 @@ jobs:
           cat > "$TOOL_DIR/clang++" <<'EOF'
           #!/usr/bin/env bash
           set -e
-          
+
           TARGET=0
           HAS_TARGET=0
-          
+
           for arg in "$@"; do
           case "$arg" in
           --target=*)
@@ -176,7 +182,7 @@ jobs:
           ;;
           esac
           done
-          
+
           for arg in "$@"; do
           case "$arg" in
           --version|-dumpversion)
@@ -184,23 +190,23 @@ jobs:
           ;;
           esac
           done
-          
+
           if [ "$TARGET" -eq 1 ]; then
           if [ "$HAS_TARGET" -eq 0 ]; then
           exec "__CLANG_ROOT__/bin/clang++" --target=aarch64-linux-gnu "$@"
           fi
           exec "__CLANG_ROOT__/bin/clang++" "$@"
           fi
-          
+
           args=()
           skip_next=0
-          
+
           for arg in "$@"; do
           if [ "$skip_next" -eq 1 ]; then
           skip_next=0
           continue
           fi
-          
+
           case "$arg" in
           --rtlib=compiler-rt)
           ;;
@@ -216,7 +222,7 @@ jobs:
           ;;
           esac
           done
-          
+
           exec /usr/bin/g++ "${args[@]}"
           EOF
           chmod +x "$TOOL_DIR/clang++"
@@ -231,11 +237,13 @@ jobs:
             [ -e "$tool" ] || continue
             ln -sf "$tool" "$TOOL_DIR/$(basename "$tool")"
           done
+
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/ld.lld"
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/lld"
           ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
 
           echo "===== VERIFY V4.5 CLANG DISPATCHER ====="
+
           printf 'int main(void){return 0;}\n' > /tmp/dispatch-host.c
           "$TOOL_DIR/clang" -c /tmp/dispatch-host.c -o /tmp/dispatch-host.o
           test -s /tmp/dispatch-host.o
@@ -252,7 +260,8 @@ jobs:
           "$TOOL_DIR/clang" -### --target=aarch64-linux-gnu -mcpu=cortex-a55 \
             -c /tmp/dispatch-target.c -o /tmp/dispatch-target2.o 2>&1 | head -n 40
 
-          COMMANDS="python3 env bash flex bison bc cpio perl gzip echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln ls md5sum mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip xz make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
+          COMMANDS="python3 env bash flex bison bc cpio perl gzip true echo printf sleep ar as awk basename bash cat chmod cmp cp cut date dirname du env expr find grep head ld ln ls md5sum mkdir mktemp mv nproc objcopy objdump od printf pwd readlink rm sed sort stat tail tar test touch tr uname uniq wc which xargs zip xz make gcc g++ aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ arm-linux-gnueabi-gcc arm-linux-gnueabi-g++"
+
           for cmd in $COMMANDS; do
             target="$(type -P "$cmd" || true)"
             [ -n "$target" ] && ln -sf "$target" "$TOOL_DIR/$cmd"
@@ -260,11 +269,13 @@ jobs:
 
           COMPAT_DIR="$CLANG_ROOT/compat-libs"
           mkdir -p "$COMPAT_DIR"
+
           SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
           ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
 
-          echo "===== VERIFY V4.9 HOST TOOL LINKS ====="
-          ls -l "$TOOL_DIR/dtc" "$TOOL_DIR/nl" "$TOOL_DIR/bc" "$TOOL_DIR/cpio" "$TOOL_DIR/gzip" "$TOOL_DIR/perl"
+          echo "===== VERIFY V4.10 HOST TOOL LINKS ====="
+          ls -l "$TOOL_DIR/dtc" "$TOOL_DIR/nl" "$TOOL_DIR/bc" "$TOOL_DIR/cpio" "$TOOL_DIR/gzip" "$TOOL_DIR/perl" "$TOOL_DIR/true"
+
           "$TOOL_DIR/dtc" --version | head -n 1
           "$TOOL_DIR/nl" --version | head -n 1 || true
           "$TOOL_DIR/bc" --version | head -n 1
@@ -275,6 +286,7 @@ jobs:
           "$TOOL_DIR/cpio" --version | head -n 1
           "$TOOL_DIR/perl" --version | head -n 2
           "$TOOL_DIR/gzip" --version | head -n 1
+          "$TOOL_DIR/true" --version | head -n 1
 
       # 5. GENERATE CONFIG (Clean & No Typo)
       - name: Generate Build Config
@@ -282,8 +294,10 @@ jobs:
           cd gta9
           rm -rf out
           mkdir -p out
+
           # Memastikan tidak ada // pada path script
           python3 -m lib2to3 -w scripts/gen_build_config.py
+
           python3 scripts/gen_build_config.py \
             --kernel-defconfig gta9_00_defconfig \
             --kernel-defconfig-overlays "entry_level.config ot11.config ot11_data.config ot11_wifi.config" \
@@ -293,6 +307,7 @@ jobs:
       - name: Set Global Environment
         run: |
           cd gta9
+
           CLANG_ROOT="$PWD/prebuilts-master/clang/host/linux-x86/${{ env.CLANG_VERSION }}"
 
           sed -i "s#^CLANG_PREBUILT_BIN=.*#CLANG_PREBUILT_BIN=$PWD/build/build-tools/path/linux-x86#" out/build.config
@@ -317,11 +332,15 @@ jobs:
           HOSTCXX: /usr/bin/g++
           HOSTLD: /usr/bin/gcc
           KCFLAGS: "-Wno-error"
+
         run: |
           set -eux
           cd gta9
+
           chmod +x build/build.sh
+
           echo "===== PRE-BUILD HOST TOOL CHECK ====="
+
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v bc
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v ls
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v md5sum
@@ -329,15 +348,25 @@ jobs:
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v cpio
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v perl
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v gzip
+          PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" command -v true
+
           PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" bc --version | head -n 1
-          PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" printf '250\n' | bc -q "$PWD/kernel-5.10/kernel/time/timeconst.bc" >/tmp/timeconst-probe.h
+
+          PATH="$PWD/build/build-tools/path/linux-x86:/usr/bin:/bin" printf '250\n' \
+            | bc -q "$PWD/kernel-5.10/kernel/time/timeconst.bc" \
+            >/tmp/timeconst-probe.h
+
           test -s /tmp/timeconst-probe.h
-          # V4.5: Keep HOSTCC/HOSTCXX/HOSTLD in the job environment; dispatcher handles LLVM host/target split.
+
+          # V4.5:
+          # Keep HOSTCC/HOSTCXX/HOSTLD in the job environment; dispatcher handles LLVM host/target split.
           # Do not pass them as build.sh arguments. LLVM=1 makes build.sh use
           # clang for CC/HOSTCC; the TOOL_DIR dispatcher sends host invocations
           # to GCC and ARM64 invocations to Android clang-r416183b.
+          #
           # DTC remains the explicit native path; TOOL_DIR/dtc protects
           # the internal build.sh PATH.
+
           bash ./build/build.sh LLVM_IAS=1 DTC=/usr/bin/dtc V=1 -j"$(($(nproc)-1))"
 
       # 8. RESULT EXTRACTION
@@ -348,6 +377,7 @@ jobs:
           cd gta9
 
           echo "===== VERIFY FINAL KERNEL OUTPUTS ====="
+
           IMAGE="$(find out -type f -name 'Image.gz' -print -quit)"
           DTB="$(find out -type f -name 'mt6789.dtb' -print -quit)"
           DTBO="$(find out -type f -name 'mt8781_gta9_eur_open_00.dtbo' -print -quit)"
@@ -355,6 +385,7 @@ jobs:
           test -n "$IMAGE"
           test -n "$DTB"
           test -n "$DTBO"
+
           test -s "$IMAGE"
           test -s "$DTB"
           test -s "$DTBO"
@@ -363,6 +394,7 @@ jobs:
 
           rm -rf package
           mkdir -p package
+
           cp "$IMAGE" package/Image.gz
           cp "$DTB" package/mt6789.dtb
           cp "$DTBO" package/mt8781_gta9_eur_open_00.dtbo
@@ -372,14 +404,24 @@ jobs:
           gzip -t package/Image.gz
 
           cd package
-          zip -9 -r ../kernel-gta9-x110.zip Image.gz mt6789.dtb mt8781_gta9_eur_open_00.dtbo .config build.config
+
+          zip -9 -r ../kernel-gta9-x110.zip \
+            Image.gz \
+            mt6789.dtb \
+            mt8781_gta9_eur_open_00.dtbo \
+            .config \
+            build.config
+
           cd ..
 
           echo "===== VERIFY ZIP CONTENTS ====="
+
           unzip -l kernel-gta9-x110.zip
+
           unzip -Z1 kernel-gta9-x110.zip | grep -qx 'Image.gz'
           unzip -Z1 kernel-gta9-x110.zip | grep -qx 'mt6789.dtb'
           unzip -Z1 kernel-gta9-x110.zip | grep -qx 'mt8781_gta9_eur_open_00.dtbo'
+
           unzip -t kernel-gta9-x110.zip >/dev/null
           test -s kernel-gta9-x110.zip
 
