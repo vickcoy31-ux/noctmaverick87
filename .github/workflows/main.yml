@@ -1,4 +1,4 @@
-name: PROJECT-OPICK-X110-FINAL-STRIKE-V4.10-TRUE-FIX
+name: PROJECT-OPICK-X110-FINAL-STRIKE-V4.11-SKIP-EXT-MODULES-FIX
 
 on:
   workflow_dispatch:
@@ -69,28 +69,14 @@ jobs:
           ln -sf /usr/bin/nl "$TOOL_DIR/nl"
 
           # Kernel Kbuild invokes "bc" by command name while build.sh rewrites PATH.
-          # Keep bc in the same private path to remove any PATH ambiguity.
           ln -sf /usr/bin/bc "$TOOL_DIR/bc"
 
-          # Kernel Kbuild also invokes gzip by command name; keep it in TOOL_DIR.
+          # Kernel Kbuild also invokes gzip by command name.
           ln -sf /usr/bin/gzip "$TOOL_DIR/gzip"
 
           # arch/arm64/Makefile.postlink invokes "true" by command name.
-          # build.sh rewrites PATH, so keep the coreutils binary in TOOL_DIR.
           ln -sf /usr/bin/true "$TOOL_DIR/true"
 
-          # V4.5 CLANG DISPATCHER:
-          #
-          # The previous dispatcher had two subtle problems:
-          #   1) "clang --version" was routed to GCC, so Kbuild believed CC
-          #      was GCC and did not add --target=aarch64-linux-gnu.
-          #   2) ARM64 invocations were forwarded to Android clang without
-          #      forcing an ARM64 target.
-          #
-          # Fix both problems:
-          #   - version/probe queries go to Android clang
-          #   - ARM64 compile invocations always get --target=aarch64-linux-gnu
-          #   - host invocations still go to Ubuntu GCC/G++
           CLANG_ROOT="$CLANG_ROOT"
 
           cat > "$TOOL_DIR/clang" <<'EOF'
@@ -115,8 +101,6 @@ jobs:
           esac
           done
 
-          # Kbuild probes "CC --version" to decide whether to inject CLANG_FLAGS.
-          # Never send that probe to GCC, or Kbuild will omit --target.
           for arg in "$@"; do
           case "$arg" in
           --version|-dumpversion)
@@ -227,12 +211,8 @@ jobs:
           EOF
           chmod +x "$TOOL_DIR/clang++"
 
-          # Embed the absolute Android clang path into both wrappers.
           sed -i "s#__CLANG_ROOT__#$CLANG_ROOT#g" "$TOOL_DIR/clang" "$TOOL_DIR/clang++"
 
-          # Make CLANG_PREBUILT_BIN point at the dispatch directory itself.
-          # _setup_env.sh prepends CLANG_PREBUILT_BIN to PATH, so this makes
-          # the dispatcher the actual "clang" seen by build.sh/Kbuild.
           for tool in "$CLANG_ROOT"/bin/llvm-* "$CLANG_ROOT"/bin/ld.lld; do
             [ -e "$tool" ] || continue
             ln -sf "$tool" "$TOOL_DIR/$(basename "$tool")"
@@ -242,7 +222,7 @@ jobs:
           ln -sf /usr/bin/ld.lld "$TOOL_DIR/lld"
           ln -sf /usr/bin/realpath "$TOOL_DIR/realpath"
 
-          echo "===== VERIFY V4.5 CLANG DISPATCHER ====="
+          echo "===== VERIFY CLANG DISPATCHER ====="
 
           printf 'int main(void){return 0;}\n' > /tmp/dispatch-host.c
           "$TOOL_DIR/clang" -c /tmp/dispatch-host.c -o /tmp/dispatch-host.o
@@ -273,7 +253,8 @@ jobs:
           SYSTEM_LIBXML="$(ldconfig -p | grep 'libxml2.so.2 ' | head -n 1 | sed 's/.*=> //')"
           ln -sf "$SYSTEM_LIBXML" "$COMPAT_DIR/libxml2.so.2.9.10"
 
-          echo "===== VERIFY V4.10 HOST TOOL LINKS ====="
+          echo "===== VERIFY HOST TOOL LINKS ====="
+
           ls -l "$TOOL_DIR/dtc" "$TOOL_DIR/nl" "$TOOL_DIR/bc" "$TOOL_DIR/cpio" "$TOOL_DIR/gzip" "$TOOL_DIR/perl" "$TOOL_DIR/true"
 
           "$TOOL_DIR/dtc" --version | head -n 1
@@ -288,14 +269,14 @@ jobs:
           "$TOOL_DIR/gzip" --version | head -n 1
           "$TOOL_DIR/true" --version | head -n 1
 
-      # 5. GENERATE CONFIG (Clean & No Typo)
+      # 5. GENERATE CONFIG
       - name: Generate Build Config
         run: |
           cd gta9
+
           rm -rf out
           mkdir -p out
 
-          # Memastikan tidak ada // pada path script
           python3 -m lib2to3 -w scripts/gen_build_config.py
 
           python3 scripts/gen_build_config.py \
@@ -312,12 +293,28 @@ jobs:
 
           sed -i "s#^CLANG_PREBUILT_BIN=.*#CLANG_PREBUILT_BIN=$PWD/build/build-tools/path/linux-x86#" out/build.config
 
+          # V4.11:
+          # Skip out-of-tree external kernel modules.
+          # The main target is the kernel Image + DTB/DTBO.
+          sed -i '/^SKIP_EXT_MODULES=/d' out/build.config
+          printf '\nSKIP_EXT_MODULES=1\n' >> out/build.config
+
+          echo "===== VERIFY V4.11 EXTERNAL MODULE POLICY ====="
+          grep -nE '^(EXT_MODULES|EXT_MODULES_MAKEFILE|SKIP_EXT_MODULES)=' out/build.config || true
+          grep -qx 'SKIP_EXT_MODULES=1' out/build.config
+
+          if [ -d vendor/mediatek/kernel_modules/met_drv_v3 ]; then
+            echo "met_drv_v3 source: PRESENT (will be skipped)"
+          else
+            echo "met_drv_v3 source: NOT PRESENT (external module skipped)"
+          fi
+
           echo "C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu:/usr/include" >> $GITHUB_ENV
           echo "CPLUS_INCLUDE_PATH=/usr/include/x86_64-linux-gnu:/usr/include" >> $GITHUB_ENV
           echo "PATH=$PWD/build/build-tools/path/linux-x86:\$PATH" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=$CLANG_ROOT/compat-libs:\$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
-      # 7. THE BUILD EXECUTION
+      # 7. BUILD
       - name: Execute Kernel Build
         env:
           ARCH: arm64
@@ -332,7 +329,7 @@ jobs:
           HOSTCXX: /usr/bin/g++
           HOSTLD: /usr/bin/gcc
           KCFLAGS: "-Wno-error"
-
+          SKIP_EXT_MODULES: "1"
         run: |
           set -eux
           cd gta9
@@ -358,18 +355,13 @@ jobs:
 
           test -s /tmp/timeconst-probe.h
 
-          # V4.5:
-          # Keep HOSTCC/HOSTCXX/HOSTLD in the job environment; dispatcher handles LLVM host/target split.
-          # Do not pass them as build.sh arguments. LLVM=1 makes build.sh use
-          # clang for CC/HOSTCC; the TOOL_DIR dispatcher sends host invocations
-          # to GCC and ARM64 invocations to Android clang-r416183b.
-          #
-          # DTC remains the explicit native path; TOOL_DIR/dtc protects
-          # the internal build.sh PATH.
+          echo "===== V4.11 BUILD POLICY ====="
+          echo "SKIP_EXT_MODULES=$SKIP_EXT_MODULES"
+          test "${SKIP_EXT_MODULES}" = "1"
 
           bash ./build/build.sh LLVM_IAS=1 DTC=/usr/bin/dtc V=1 -j"$(($(nproc)-1))"
 
-      # 8. RESULT EXTRACTION
+      # 8. PACKAGE
       - name: Package and Upload
         if: success()
         run: |
