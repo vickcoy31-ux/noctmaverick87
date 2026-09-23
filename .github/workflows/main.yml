@@ -402,7 +402,7 @@ jobs:
             echo "Found overlay blob: $OVERLAY_DTB"
 
             # The DTS is /plugin/; Kbuild emitted the correct overlay blob
-            # as .dtb. Preserve those bytes and expose them under the .dtbo
+            # as .dtb. Preserve those exact bytes and expose them under the .dtbo
             # filename expected by the Samsung packaging path.
             cp -f "$OVERLAY_DTB" "$DTBO_OUT"
           fi
