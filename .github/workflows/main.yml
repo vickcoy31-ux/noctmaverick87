@@ -378,6 +378,12 @@ jobs:
 
           mkdir -p "$DTBO_DIR"
 
+          DTC_BIN="$PWD/out/scripts/dtc/dtc"
+          if [ ! -x "$DTC_BIN" ]; then
+            DTC_BIN="/usr/bin/dtc"
+          fi
+          test -x "$DTC_BIN"
+
           echo "===== SEARCH EXISTING DTBO ====="
           EXISTING_DTBO="$(find out -type f -name "$DTBO_NAME" -print -quit)"
 
@@ -389,12 +395,6 @@ jobs:
           else
             echo "No DTBO produced by the normal build; compiling overlay from DTS."
             test -f "$DTS"
-
-            DTC_BIN="$PWD/out/scripts/dtc/dtc"
-            if [ ! -x "$DTC_BIN" ]; then
-              DTC_BIN="/usr/bin/dtc"
-            fi
-            test -x "$DTC_BIN"
 
             TMP_DTS="$PWD/out/mt8781_gta9_eur_open_00.preprocessed.dts"
 
