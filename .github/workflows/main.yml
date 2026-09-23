@@ -361,7 +361,68 @@ jobs:
 
           bash ./build/build.sh LLVM_IAS=1 DTC=/usr/bin/dtc V=1 -j"$(($(nproc)-1))"
 
-      # 8. PACKAGE
+      # 8. ENSURE MTK DTBO
+      # The Samsung/MTK tree expects the overlay as .dtbo, while the
+      # ARM64 Kbuild path may leave the source overlay un-emitted.
+      # Keep this workflow-only: do not modify the kernel source tree.
+      - name: Ensure MTK DTBO
+        if: success()
+        run: |
+          set -eux
+          cd gta9
+
+          DTBO_NAME="mt8781_gta9_eur_open_00.dtbo"
+          DTBO_DIR="out/arch/arm64/boot/dts/mediatek"
+          DTBO_OUT="$DTBO_DIR/$DTBO_NAME"
+          DTS="arch/arm64/boot/dts/mediatek/mt8781_gta9_eur_open_00.dts"
+
+          mkdir -p "$DTBO_DIR"
+
+          echo "===== SEARCH EXISTING DTBO ====="
+          EXISTING_DTBO="$(find out -type f -name "$DTBO_NAME" -print -quit)"
+
+          if [ -n "$EXISTING_DTBO" ]; then
+            echo "Using existing DTBO: $EXISTING_DTBO"
+            if [ "$EXISTING_DTBO" != "$DTBO_OUT" ]; then
+              cp -f "$EXISTING_DTBO" "$DTBO_OUT"
+            fi
+          else
+            echo "No DTBO produced by the normal build; compiling overlay from DTS."
+            test -f "$DTS"
+
+            DTC_BIN="$PWD/out/scripts/dtc/dtc"
+            if [ ! -x "$DTC_BIN" ]; then
+              DTC_BIN="/usr/bin/dtc"
+            fi
+            test -x "$DTC_BIN"
+
+            TMP_DTS="$PWD/out/mt8781_gta9_eur_open_00.preprocessed.dts"
+
+            /usr/bin/gcc -E \\
+              -nostdinc \\
+              -I"$PWD/arch/arm64/boot/dts" \\
+              -I"$PWD/arch/arm64/boot/dts/include" \\
+              -I"$PWD/scripts/dtc/include-prefixes" \\
+              -undef -D__DTS__ \\
+              -x assembler-with-cpp \\
+              -o "$TMP_DTS" \\
+              "$DTS"
+
+            "$DTC_BIN" -@ -O dtb -o "$DTBO_OUT" -b 0 \\
+              -i"$(dirname "$DTS")" \\
+              -i"$PWD/arch/arm64/boot/dts" \\
+              -i"$PWD/scripts/dtc/include-prefixes" \\
+              "$TMP_DTS"
+          fi
+
+          echo "===== VERIFY MTK DTBO ====="
+          test -s "$DTBO_OUT"
+          "$DTC_BIN" -I dtb -O dts -o /tmp/mt8781_gta9_eur_open_00.verify.dts "$DTBO_OUT"
+          grep -q 'dtbo-hw_rev' /tmp/mt8781_gta9_eur_open_00.verify.dts
+          grep -q 'dtbo-hw_rev_end' /tmp/mt8781_gta9_eur_open_00.verify.dts
+          ls -lh "$DTBO_OUT"
+
+      # 9. PACKAGE
       - name: Package and Upload
         if: success()
         run: |
