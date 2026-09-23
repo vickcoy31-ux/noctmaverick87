@@ -379,7 +379,7 @@ jobs:
           DTBO_OUT="$DTBO_DIR/$DTBO_NAME"
           EXPECTED_DTB_NAME="mt8781_gta9_eur_open_00.dtb"
 
-          DTC_BIN="\${PWD}/out/scripts/dtc/dtc"
+          DTC_BIN="${PWD}/out/scripts/dtc/dtc"
           if [ ! -x "$DTC_BIN" ]; then
             DTC_BIN="/usr/bin/dtc"
           fi
