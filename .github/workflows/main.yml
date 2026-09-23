@@ -2,6 +2,9 @@ name: PROJECT-OPICK-X110-FINAL-STRIKE-V4.11-SKIP-EXT-MODULES-FIX
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - agent/dtbo-workflow-fix
 
 jobs:
   build:
