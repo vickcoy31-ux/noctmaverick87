@@ -401,20 +401,20 @@ jobs:
 
             TMP_DTS="$PWD/out/mt8781_gta9_eur_open_00.preprocessed.dts"
 
-            /usr/bin/gcc -E \\
-              -nostdinc \\
-              -I"$PWD/arch/arm64/boot/dts" \\
-              -I"$PWD/arch/arm64/boot/dts/include" \\
-              -I"$PWD/scripts/dtc/include-prefixes" \\
-              -undef -D__DTS__ \\
-              -x assembler-with-cpp \\
-              -o "$TMP_DTS" \\
+            /usr/bin/gcc -E \
+              -nostdinc \
+              -I"$PWD/arch/arm64/boot/dts" \
+              -I"$PWD/arch/arm64/boot/dts/include" \
+              -I"$PWD/scripts/dtc/include-prefixes" \
+              -undef -D__DTS__ \
+              -x assembler-with-cpp \
+              -o "$TMP_DTS" \
               "$DTS"
 
-            "$DTC_BIN" -@ -O dtb -o "$DTBO_OUT" -b 0 \\
-              -i"$(dirname "$DTS")" \\
-              -i"$PWD/arch/arm64/boot/dts" \\
-              -i"$PWD/scripts/dtc/include-prefixes" \\
+            "$DTC_BIN" -@ -O dtb -o "$DTBO_OUT" -b 0 \
+              -i"$(dirname "$DTS")" \
+              -i"$PWD/arch/arm64/boot/dts" \
+              -i"$PWD/scripts/dtc/include-prefixes" \
               "$TMP_DTS"
           fi
 
