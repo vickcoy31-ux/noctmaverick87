@@ -365,9 +365,9 @@ jobs:
           bash ./build/build.sh LLVM_IAS=1 DTC=/usr/bin/dtc V=1 -j"$(($(nproc)-1))"
 
       # 8. ENSURE MTK DTBO
-      # The Samsung/MTK tree expects the overlay as .dtbo, while the
-      # ARM64 Kbuild path may leave the source overlay un-emitted.
-      # Keep this workflow-only: do not modify the kernel source tree.
+      # The ARM64 Kbuild in this vendor tree compiles the overlay DTS as
+      # mt8781_gta9_eur_open_00.dtb even though downstream packaging
+      # expects the same blob with a .dtbo suffix.
       - name: Ensure MTK DTBO
         if: success()
         run: |
@@ -377,15 +377,15 @@ jobs:
           DTBO_NAME="mt8781_gta9_eur_open_00.dtbo"
           DTBO_DIR="out/arch/arm64/boot/dts/mediatek"
           DTBO_OUT="$DTBO_DIR/$DTBO_NAME"
-          DTS="arch/arm64/boot/dts/mediatek/mt8781_gta9_eur_open_00.dts"
+          EXPECTED_DTB_NAME="mt8781_gta9_eur_open_00.dtb"
 
-          mkdir -p "$DTBO_DIR"
-
-          DTC_BIN="$PWD/out/scripts/dtc/dtc"
+          DTC_BIN="\${PWD}/out/scripts/dtc/dtc"
           if [ ! -x "$DTC_BIN" ]; then
             DTC_BIN="/usr/bin/dtc"
           fi
           test -x "$DTC_BIN"
+
+          mkdir -p "$DTBO_DIR"
 
           echo "===== SEARCH EXISTING DTBO ====="
           EXISTING_DTBO="$(find out -type f -name "$DTBO_NAME" -print -quit)"
@@ -396,31 +396,22 @@ jobs:
               cp -f "$EXISTING_DTBO" "$DTBO_OUT"
             fi
           else
-            echo "No DTBO produced by the normal build; compiling overlay from DTS."
-            test -f "$DTS"
+            echo "===== SEARCH KBUILD OVERLAY DTB ====="
+            OVERLAY_DTB="$(find out -type f -name "$EXPECTED_DTB_NAME" -print -quit)"
+            test -n "$OVERLAY_DTB"
+            echo "Found overlay blob: $OVERLAY_DTB"
 
-            TMP_DTS="$PWD/out/mt8781_gta9_eur_open_00.preprocessed.dts"
-
-            /usr/bin/gcc -E \
-              -nostdinc \
-              -I"$PWD/arch/arm64/boot/dts" \
-              -I"$PWD/arch/arm64/boot/dts/include" \
-              -I"$PWD/scripts/dtc/include-prefixes" \
-              -undef -D__DTS__ \
-              -x assembler-with-cpp \
-              -o "$TMP_DTS" \
-              "$DTS"
-
-            "$DTC_BIN" -@ -O dtb -o "$DTBO_OUT" -b 0 \
-              -i"$(dirname "$DTS")" \
-              -i"$PWD/arch/arm64/boot/dts" \
-              -i"$PWD/scripts/dtc/include-prefixes" \
-              "$TMP_DTS"
+            # The DTS is /plugin/; Kbuild emitted the correct overlay blob
+            # as .dtb. Preserve those bytes and expose them under the .dtbo
+            # filename expected by the Samsung packaging path.
+            cp -f "$OVERLAY_DTB" "$DTBO_OUT"
           fi
 
           echo "===== VERIFY MTK DTBO ====="
           test -s "$DTBO_OUT"
           "$DTC_BIN" -I dtb -O dts -o /tmp/mt8781_gta9_eur_open_00.verify.dts "$DTBO_OUT"
+          grep -q 'fragment@' /tmp/mt8781_gta9_eur_open_00.verify.dts
+          grep -q '__overlay__' /tmp/mt8781_gta9_eur_open_00.verify.dts
           grep -q 'dtbo-hw_rev' /tmp/mt8781_gta9_eur_open_00.verify.dts
           grep -q 'dtbo-hw_rev_end' /tmp/mt8781_gta9_eur_open_00.verify.dts
           ls -lh "$DTBO_OUT"
